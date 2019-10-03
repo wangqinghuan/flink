@@ -144,6 +144,7 @@ public abstract class StreamExecutionEnvironment {
 
 	protected final List<Tuple2<String, DistributedCache.DistributedCacheEntry>> cacheFile = new ArrayList<>();
 
+	protected final List<Path> userJars = new ArrayList<>();
 
 	// --------------------------------------------------------------------------------------------
 	// Constructor and Properties
@@ -161,6 +162,14 @@ public abstract class StreamExecutionEnvironment {
 	*/
 	public List<Tuple2<String, DistributedCache.DistributedCacheEntry>> getCachedFiles() {
 		return cacheFile;
+	}
+
+	/**
+	 * Get the list of user jar files that were registered for distribution among the task managers.
+	 * @return
+	 */
+	public List<Path> getUserJars() {
+		return userJars;
 	}
 
 	/**
@@ -1545,6 +1554,7 @@ public abstract class StreamExecutionEnvironment {
 		return new StreamGraphGenerator(transformations, config, checkpointCfg)
 			.setStateBackend(defaultStateBackend)
 			.setChaining(isChainingEnabled)
+			.setUserJar(userJars)
 			.setUserArtifacts(cacheFile)
 			.setTimeCharacteristic(timeCharacteristic)
 			.setDefaultBufferTimeout(bufferTimeout);
@@ -1846,5 +1856,15 @@ public abstract class StreamExecutionEnvironment {
 	 */
 	public void registerCachedFile(String filePath, String name, boolean executable) {
 		this.cacheFile.add(new Tuple2<>(name, new DistributedCache.DistributedCacheEntry(filePath, executable)));
+	}
+
+	/**
+	 * Registers a jar file to load in this Flink job dynamically. This jar file would be shipped along with the job submission,
+	 *  and then, the jar file is loaded into user code class loader automatically.
+	 * @param jarFile The path of the jar file (e.g., "file:///path/to/jar" or "hdfs://host:port/path/to/jar").
+	 */
+	public void registerUserJarFile(String jarFile) {
+		Path path = new Path(jarFile);
+		this.userJars.add(path);
 	}
 }
