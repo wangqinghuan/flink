@@ -32,6 +32,7 @@ import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.api.java.typeutils.MissingTypeInfo;
+import org.apache.flink.core.fs.Path;
 import org.apache.flink.core.memory.ManagedMemoryUseCase;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobgraph.SavepointRestoreSettings;
@@ -96,6 +97,8 @@ public class StreamGraph implements Pipeline {
     private boolean chaining;
 
     private Collection<Tuple2<String, DistributedCache.DistributedCacheEntry>> userArtifacts;
+
+    private List<Path> userJars;
 
     private TimeCharacteristic timeCharacteristic;
 
@@ -200,7 +203,13 @@ public class StreamGraph implements Pipeline {
             Collection<Tuple2<String, DistributedCache.DistributedCacheEntry>> userArtifacts) {
         this.userArtifacts = userArtifacts;
     }
+    public List<Path> getUserJars() {
+        return userJars;
+    }
 
+    public void setUserJars(List<Path> userJars) {
+        this.userJars = userJars;
+    }
     public TimeCharacteristic getTimeCharacteristic() {
         return timeCharacteristic;
     }

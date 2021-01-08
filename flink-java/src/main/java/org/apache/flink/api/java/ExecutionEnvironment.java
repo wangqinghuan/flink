@@ -126,7 +126,7 @@ public class ExecutionEnvironment {
     private final List<DataSink<?>> sinks = new ArrayList<>();
 
     private final List<Tuple2<String, DistributedCacheEntry>> cacheFile = new ArrayList<>();
-
+    private final List<Path> userJars = new ArrayList<>();
     private final ExecutionConfig config = new ExecutionConfig();
 
     /**
@@ -1114,6 +1114,26 @@ public class ExecutionEnvironment {
      */
     public void registerCachedFile(String filePath, String name, boolean executable) {
         this.cacheFile.add(new Tuple2<>(name, new DistributedCacheEntry(filePath, executable)));
+    }
+    /**
+     * Registers a jar file to load in this Flink job dynamically. This jar file would be shipped along with the job submission,
+     *  and then, the jar file is loaded into user code class loader automatically.
+     * @param jarFile The path of the jar file (e.g., "file:///path/to/jar" or "hdfs://host:port/path/to/jar").
+     */
+    public void registerUserJarFile(String jarFile) {
+        Path path = new Path(jarFile);
+        this.userJars.add(path);
+    }
+
+    /**
+     * Registers all files that were registered at this execution environment's user jar files of the
+     * given plan's user jar files.
+     * @param p The plan to register files at.
+     */
+    protected void registerUserJarFileWithPlan(Plan p) {
+        for (Path jarFile: userJars) {
+            p.registerUserJarFile(jarFile);
+        }
     }
 
     /**

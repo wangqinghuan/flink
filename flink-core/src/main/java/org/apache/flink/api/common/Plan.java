@@ -23,6 +23,7 @@ import org.apache.flink.api.common.cache.DistributedCache.DistributedCacheEntry;
 import org.apache.flink.api.common.operators.GenericDataSinkBase;
 import org.apache.flink.api.common.operators.Operator;
 import org.apache.flink.api.dag.Pipeline;
+import org.apache.flink.core.fs.Path;
 import org.apache.flink.util.Visitable;
 import org.apache.flink.util.Visitor;
 
@@ -63,7 +64,7 @@ public class Plan implements Visitable<Operator<?>>, Pipeline {
 
     /** Hash map for files in the distributed cache: registered name to cache entry. */
     protected HashMap<String, DistributedCacheEntry> cacheFile = new HashMap<>();
-
+    protected List<Path> userJars = new ArrayList<>();
     /** Config object for runtime execution parameters. */
     protected ExecutionConfig executionConfig;
 
@@ -339,7 +340,15 @@ public class Plan implements Visitable<Operator<?>>, Pipeline {
             throw new IOException("cache file " + name + "already exists!");
         }
     }
-
+    /**
+     * Return the registered cached files.
+     *
+     * Registers a jar file in program level
+     * @param jarFile The path of the jar file
+     */
+    public void registerUserJarFile(Path jarFile) {
+        this.userJars.add(jarFile);
+    }
     /**
      * Return the registered cached files.
      *
@@ -348,7 +357,13 @@ public class Plan implements Visitable<Operator<?>>, Pipeline {
     public Set<Entry<String, DistributedCacheEntry>> getCachedFiles() {
         return this.cacheFile.entrySet();
     }
-
+    /**
+     * return the registered user jar files
+     * @return
+     */
+    public List<Path> getUserJars() {
+        return userJars;
+    }
     public int getMaximumParallelism() {
         MaxDopVisitor visitor = new MaxDopVisitor();
         accept(visitor);

@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Collection;
+import java.util.List;
 
 /** Utilities for generating {@link JobGraph}. */
 public enum JobGraphUtils {
@@ -80,6 +81,13 @@ public enum JobGraphUtils {
             } catch (IOException ioe) {
                 throw new FlinkRuntimeException(
                         "Could not compress distributed-cache artifacts.", ioe);
+            }
+        }
+    }
+    public static void addUserJars(List<Path> userJars, JobGraph jobGraph) {
+        if(userJars != null) {
+            for (Path jar: userJars) {
+                jobGraph.addJar(jar);
             }
         }
     }

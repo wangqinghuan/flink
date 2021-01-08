@@ -194,6 +194,7 @@ public class StreamingJobGraphGenerator {
 
         JobGraphUtils.addUserArtifactEntries(streamGraph.getUserArtifacts(), jobGraph);
 
+        JobGraphUtils.addUserJars(streamGraph.getUserJars(), jobGraph);
         // set the ExecutionConfig last when it has been finalized
         try {
             jobGraph.setExecutionConfig(streamGraph.getExecutionConfig());

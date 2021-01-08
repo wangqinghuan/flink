@@ -480,7 +480,17 @@ class ExecutionEnvironment(javaEnv: JavaEnv) {
   def registerCachedFile(filePath: String, name: String, executable: Boolean = false): Unit = {
     javaEnv.registerCachedFile(filePath, name, executable)
   }
-
+  /**
+    * Registers a jar file to load in this Flink job dynamically.
+    * This jar file would be shipped along with the job submission,
+    * and then, the jar file is loaded into user code class loader automatically.
+    *
+    * @param jarFile The path of the jar file (e.g., "file:///path/to/jar"
+    *                or "hdfs://host:port/path/to/jar").
+    */
+  def registerUserJarFile(jarFile: String): Unit = {
+    javaEnv.registerUserJarFile(jarFile)
+  }
   /**
    * Triggers the program execution. The environment will execute all parts of the program that have
    * resulted in a "sink" operation. Sink operations are for example printing results

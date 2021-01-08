@@ -273,7 +273,7 @@ public class JobGraphGenerator implements Visitor<PlanNode> {
                         .map(entry -> Tuple2.of(entry.getKey(), entry.getValue()))
                         .collect(Collectors.toList());
         JobGraphUtils.addUserArtifactEntries(userArtifacts, graph);
-
+        JobGraphUtils.addUserJars(program.getOriginalPlan().getUserJars(), graph);
         // release all references again
         this.vertices = null;
         this.chainedTasks = null;

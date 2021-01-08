@@ -28,6 +28,7 @@ import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ExecutionOptions;
 import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.core.fs.Path;
 import org.apache.flink.runtime.jobgraph.SavepointRestoreSettings;
 import org.apache.flink.runtime.jobgraph.ScheduleMode;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
@@ -138,7 +139,7 @@ public class StreamGraphGenerator {
     private boolean chaining = true;
 
     private Collection<Tuple2<String, DistributedCache.DistributedCacheEntry>> userArtifacts;
-
+    private List<Path> userJars;
     private TimeCharacteristic timeCharacteristic = DEFAULT_TIME_CHARACTERISTIC;
 
     private String jobName = DEFAULT_JOB_NAME;
@@ -231,6 +232,11 @@ public class StreamGraphGenerator {
     public StreamGraphGenerator setUserArtifacts(
             Collection<Tuple2<String, DistributedCache.DistributedCacheEntry>> userArtifacts) {
         this.userArtifacts = userArtifacts;
+        return this;
+    }
+
+    public StreamGraphGenerator setUserJar(List<Path> userJars) {
+        this.userJars = userJars;
         return this;
     }
 
