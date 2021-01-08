@@ -203,6 +203,7 @@ public class StreamGraph implements Pipeline {
             Collection<Tuple2<String, DistributedCache.DistributedCacheEntry>> userArtifacts) {
         this.userArtifacts = userArtifacts;
     }
+
     public List<Path> getUserJars() {
         return userJars;
     }
@@ -210,6 +211,7 @@ public class StreamGraph implements Pipeline {
     public void setUserJars(List<Path> userJars) {
         this.userJars = userJars;
     }
+
     public TimeCharacteristic getTimeCharacteristic() {
         return timeCharacteristic;
     }

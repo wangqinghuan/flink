@@ -64,6 +64,7 @@ public class Plan implements Visitable<Operator<?>>, Pipeline {
 
     /** Hash map for files in the distributed cache: registered name to cache entry. */
     protected HashMap<String, DistributedCacheEntry> cacheFile = new HashMap<>();
+
     protected List<Path> userJars = new ArrayList<>();
     /** Config object for runtime execution parameters. */
     protected ExecutionConfig executionConfig;
@@ -343,7 +344,8 @@ public class Plan implements Visitable<Operator<?>>, Pipeline {
     /**
      * Return the registered cached files.
      *
-     * Registers a jar file in program level
+     * <p>Registers a jar file in program level
+     *
      * @param jarFile The path of the jar file
      */
     public void registerUserJarFile(Path jarFile) {
@@ -359,11 +361,13 @@ public class Plan implements Visitable<Operator<?>>, Pipeline {
     }
     /**
      * return the registered user jar files
+     *
      * @return
      */
     public List<Path> getUserJars() {
         return userJars;
     }
+
     public int getMaximumParallelism() {
         MaxDopVisitor visitor = new MaxDopVisitor();
         accept(visitor);

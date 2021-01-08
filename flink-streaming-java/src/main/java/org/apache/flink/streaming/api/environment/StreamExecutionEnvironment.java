@@ -265,6 +265,7 @@ public class StreamExecutionEnvironment {
     }
     /**
      * Get the list of user jar files that were registered for distribution among the task managers.
+     *
      * @return
      */
     public List<Path> getUserJars() {
@@ -2278,9 +2279,12 @@ public class StreamExecutionEnvironment {
                         name, new DistributedCache.DistributedCacheEntry(filePath, executable)));
     }
     /**
-     * Registers a jar file to load in this Flink job dynamically. This jar file would be shipped along with the job submission,
-     *  and then, the jar file is loaded into user code class loader automatically.
-     * @param jarFile The path of the jar file (e.g., "file:///path/to/jar" or "hdfs://host:port/path/to/jar").
+     * Registers a jar file to load in this Flink job dynamically. This jar file would be shipped
+     * along with the job submission, and then, the jar file is loaded into user code class loader
+     * automatically.
+     *
+     * @param jarFile The path of the jar file (e.g., "file:///path/to/jar" or
+     *     "hdfs://host:port/path/to/jar").
      */
     public void registerUserJarFile(String jarFile) {
         Path path = new Path(jarFile);

@@ -84,9 +84,10 @@ public enum JobGraphUtils {
             }
         }
     }
+
     public static void addUserJars(List<Path> userJars, JobGraph jobGraph) {
-        if(userJars != null) {
-            for (Path jar: userJars) {
+        if (userJars != null) {
+            for (Path jar : userJars) {
                 jobGraph.addJar(jar);
             }
         }
