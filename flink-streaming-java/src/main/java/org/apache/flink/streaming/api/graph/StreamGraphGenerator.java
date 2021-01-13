@@ -284,6 +284,7 @@ public class StreamGraphGenerator {
 
         graph.setChaining(chaining);
         graph.setUserArtifacts(userArtifacts);
+        graph.setUserJars(userJars);
         graph.setTimeCharacteristic(timeCharacteristic);
         graph.setJobName(jobName);
 

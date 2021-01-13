@@ -48,10 +48,22 @@ under the License.
 		<connection>git@github.com:apache/flink.git</connection>
 		<developerConnection>scm:git:https://gitbox.apache.org/repos/asf/flink.git</developerConnection>
 	</scm>
-
+	<distributionManagement>
+		<repository>
+			<id> botech-common-release</id>
+			<name> Botech Common Release</name>
+			<url> http://192.168.3.249:8081/repository/botech-common-release/</url>
+		</repository>
+		<snapshotRepository>
+			<id>botech-common-snapshots</id>
+			<name>Botech Common Snapshots</name>
+			<url>http://192.168.3.249:8081/repository/botech-common-snapshots/</url>
+		</snapshotRepository>
+	</distributionManagement>
 	<modules>
 		<!-- Dummy module to force execution of the Maven Shade plugin (see Shade plugin below) -->
-		<module>tools/force-shading</module>
+		<!--<module>tools/force-shading</module>
+		-->
 		<module>flink-annotations</module>
 		<module>flink-core</module>
 		<module>flink-java</module>

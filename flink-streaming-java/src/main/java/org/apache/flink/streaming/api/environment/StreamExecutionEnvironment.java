@@ -263,6 +263,7 @@ public class StreamExecutionEnvironment {
     public List<Tuple2<String, DistributedCache.DistributedCacheEntry>> getCachedFiles() {
         return cacheFile;
     }
+
     /**
      * Get the list of user jar files that were registered for distribution among the task managers.
      *
@@ -271,6 +272,7 @@ public class StreamExecutionEnvironment {
     public List<Path> getUserJars() {
         return userJars;
     }
+
     /** Gets the config JobListeners. */
     @PublicEvolving
     public List<JobListener> getJobListeners() {
@@ -2278,6 +2280,7 @@ public class StreamExecutionEnvironment {
                 new Tuple2<>(
                         name, new DistributedCache.DistributedCacheEntry(filePath, executable)));
     }
+
     /**
      * Registers a jar file to load in this Flink job dynamically. This jar file would be shipped
      * along with the job submission, and then, the jar file is loaded into user code class loader
@@ -2290,6 +2293,7 @@ public class StreamExecutionEnvironment {
         Path path = new Path(jarFile);
         this.userJars.add(path);
     }
+
     // Private helpers.
     @SuppressWarnings("unchecked")
     private <OUT, T extends TypeInformation<OUT>> T getTypeInfo(
