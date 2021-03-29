@@ -22,6 +22,7 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.SqlDialect;
 import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.api.internal.TableEnvironmentInternal;
 import org.apache.flink.table.api.internal.TableImpl;
 import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.catalog.ObjectIdentifier;
@@ -227,7 +228,7 @@ public class HiveLookupJoinITCase {
                                         + " default_catalog.default_database.probe as p "
                                         + " join bounded_table for system_time as of p.p as b on p.x=b.x and p.y=b.y");
         List<Row> results = CollectionUtil.iteratorToList(flinkTable.execute().collect());
-        assertEquals("[1,a,10, 2,b,22, 3,c,33]", results.toString());
+        assertEquals("[+I[1, a, 10], +I[2, b, 22], +I[3, c, 33]]", results.toString());
     }
 
     @Test
@@ -253,7 +254,8 @@ public class HiveLookupJoinITCase {
                                         + " join bounded_partition_table for system_time as of p.p as b on p.x=b.x and p.y=b.y");
         List<Row> results = CollectionUtil.iteratorToList(flinkTable.execute().collect());
         assertEquals(
-                "[1,a,8,2019,08,01, 1,a,10,2020,08,31, 2,b,22,2020,08,31]", results.toString());
+                "[+I[1, a, 8, 2019, 08, 01], +I[1, a, 10, 2020, 08, 31], +I[2, b, 22, 2020, 08, 31]]",
+                results.toString());
     }
 
     @Test
@@ -283,7 +285,8 @@ public class HiveLookupJoinITCase {
                                         + " join partition_table_1 for system_time as of p.p as b on p.x=b.x and p.y=b.y");
         List<Row> results = CollectionUtil.iteratorToList(flinkTable.execute().collect());
         assertEquals(
-                "[1,a,10,2020,09,31, 2,b,22,2020,09,31, 3,c,33,2020,09,31]", results.toString());
+                "[+I[1, a, 10, 2020, 09, 31], +I[2, b, 22, 2020, 09, 31], +I[3, c, 33, 2020, 09, 31]]",
+                results.toString());
     }
 
     @Test
@@ -312,7 +315,8 @@ public class HiveLookupJoinITCase {
                                         + " default_catalog.default_database.probe as p"
                                         + " join partition_table_2 for system_time as of p.p as b on p.x=b.x and p.y=b.y");
         List<Row> results = CollectionUtil.iteratorToList(flinkTable.execute().collect());
-        assertEquals("[1,a,10,2020,08,31, 2,b,22,2020,08,31]", results.toString());
+        assertEquals(
+                "[+I[1, a, 10, 2020, 08, 31], +I[2, b, 22, 2020, 08, 31]]", results.toString());
     }
 
     @Test
@@ -350,11 +354,13 @@ public class HiveLookupJoinITCase {
                                         + " default_catalog.default_database.probe as p"
                                         + " join partition_table_3 for system_time as of p.p as b on p.x=b.x and p.y=b.y");
         List<Row> results = CollectionUtil.iteratorToList(flinkTable.execute().collect());
-        assertEquals("[1,a,101,2020,08,01, 2,b,122,2020,08,01]", results.toString());
+        assertEquals(
+                "[+I[1, a, 101, 2020, 08, 01], +I[2, b, 122, 2020, 08, 01]]", results.toString());
     }
 
     private FileSystemLookupFunction<HiveTablePartition> getLookupFunction(String tableName)
             throws Exception {
+        TableEnvironmentInternal tableEnvInternal = (TableEnvironmentInternal) tableEnv;
         ObjectIdentifier tableIdentifier =
                 ObjectIdentifier.of(hiveCatalog.getName(), "default", tableName);
         CatalogTable catalogTable =
@@ -364,7 +370,9 @@ public class HiveLookupJoinITCase {
                         FactoryUtil.createTableSource(
                                 hiveCatalog,
                                 tableIdentifier,
-                                catalogTable,
+                                tableEnvInternal
+                                        .getCatalogManager()
+                                        .resolveCatalogTable(catalogTable),
                                 tableEnv.getConfig().getConfiguration(),
                                 Thread.currentThread().getContextClassLoader(),
                                 false);

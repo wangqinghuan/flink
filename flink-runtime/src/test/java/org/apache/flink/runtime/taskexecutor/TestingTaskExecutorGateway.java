@@ -37,12 +37,10 @@ import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobmaster.AllocatedSlotReport;
 import org.apache.flink.runtime.jobmaster.JobMasterId;
 import org.apache.flink.runtime.messages.Acknowledge;
-import org.apache.flink.runtime.messages.TaskBackPressureResponse;
 import org.apache.flink.runtime.operators.coordination.OperatorEvent;
 import org.apache.flink.runtime.resourcemanager.ResourceManagerId;
 import org.apache.flink.runtime.rest.messages.LogInfo;
 import org.apache.flink.runtime.rest.messages.taskmanager.ThreadDumpInfo;
-import org.apache.flink.runtime.rpc.RpcTimeout;
 import org.apache.flink.types.SerializableOptional;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.SerializedValue;
@@ -79,6 +77,8 @@ public class TestingTaskExecutorGateway implements TaskExecutorGateway {
 
     private final BiFunction<AllocationID, Throwable, CompletableFuture<Acknowledge>>
             freeSlotFunction;
+
+    private final Consumer<JobID> freeInactiveSlotsConsumer;
 
     private final Consumer<ResourceID> heartbeatResourceManagerConsumer;
 
@@ -120,6 +120,7 @@ public class TestingTaskExecutorGateway implements TaskExecutorGateway {
                             CompletableFuture<Acknowledge>>
                     requestSlotFunction,
             BiFunction<AllocationID, Throwable, CompletableFuture<Acknowledge>> freeSlotFunction,
+            Consumer<JobID> freeInactiveSlotsConsumer,
             Consumer<ResourceID> heartbeatResourceManagerConsumer,
             Consumer<Exception> disconnectResourceManagerConsumer,
             Function<ExecutionAttemptID, CompletableFuture<Acknowledge>> cancelTaskFunction,
@@ -143,6 +144,7 @@ public class TestingTaskExecutorGateway implements TaskExecutorGateway {
         this.submitTaskConsumer = Preconditions.checkNotNull(submitTaskConsumer);
         this.requestSlotFunction = Preconditions.checkNotNull(requestSlotFunction);
         this.freeSlotFunction = Preconditions.checkNotNull(freeSlotFunction);
+        this.freeInactiveSlotsConsumer = Preconditions.checkNotNull(freeInactiveSlotsConsumer);
         this.heartbeatResourceManagerConsumer = heartbeatResourceManagerConsumer;
         this.disconnectResourceManagerConsumer = disconnectResourceManagerConsumer;
         this.cancelTaskFunction = cancelTaskFunction;
@@ -170,12 +172,6 @@ public class TestingTaskExecutorGateway implements TaskExecutorGateway {
                         resourceProfile,
                         targetAddress,
                         resourceManagerId));
-    }
-
-    @Override
-    public CompletableFuture<TaskBackPressureResponse> requestTaskBackPressure(
-            ExecutionAttemptID executionAttemptId, int requestId, @RpcTimeout Time timeout) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -212,8 +208,7 @@ public class TestingTaskExecutorGateway implements TaskExecutorGateway {
             ExecutionAttemptID executionAttemptID,
             long checkpointID,
             long checkpointTimestamp,
-            CheckpointOptions checkpointOptions,
-            boolean advanceToEndOfEventTime) {
+            CheckpointOptions checkpointOptions) {
         return CompletableFuture.completedFuture(Acknowledge.get());
     }
 
@@ -260,6 +255,11 @@ public class TestingTaskExecutorGateway implements TaskExecutorGateway {
     public CompletableFuture<Acknowledge> freeSlot(
             AllocationID allocationId, Throwable cause, Time timeout) {
         return freeSlotFunction.apply(allocationId, cause);
+    }
+
+    @Override
+    public void freeInactiveSlots(JobID jobId, Time timeout) {
+        freeInactiveSlotsConsumer.accept(jobId);
     }
 
     @Override

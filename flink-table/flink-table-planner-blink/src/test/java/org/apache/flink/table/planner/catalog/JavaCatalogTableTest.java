@@ -176,7 +176,7 @@ public class JavaCatalogTableTest extends TableTestBase {
         }
 
         @Override
-        public Map<String, String> getProperties() {
+        public Map<String, String> getOptions() {
             Map<String, String> map = new HashMap<>();
             map.put("connector", "values");
             map.put("bounded", Boolean.toString(!isStreamingMode));
@@ -187,8 +187,8 @@ public class JavaCatalogTableTest extends TableTestBase {
         public TableSchema getSchema() {
             return TableSchema.builder()
                     .field("count", DataTypes.BIGINT())
-                    .field("rowtime", DataTypes.TIMESTAMP())
-                    .field("proctime", DataTypes.TIMESTAMP(), "proctime()")
+                    .field("rowtime", DataTypes.TIMESTAMP(3))
+                    .field("proctime", DataTypes.TIMESTAMP(3), "proctime()")
                     .watermark("rowtime", "rowtime - INTERVAL '5' SECONDS", DataTypes.TIMESTAMP())
                     .build();
         }

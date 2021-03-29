@@ -48,6 +48,7 @@ import org.apache.flink.streaming.runtime.io.PushingAsyncDataInput;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 import org.apache.flink.util.CollectionUtil;
 import org.apache.flink.util.FlinkRuntimeException;
+import org.apache.flink.util.UserCodeClassLoader;
 import org.apache.flink.util.function.FunctionWithException;
 
 import java.io.IOException;
@@ -126,6 +127,9 @@ public class SourceOperator<OUT, SplitT extends SourceSplit> extends AbstractStr
      */
     private TimestampsAndWatermarks<OUT> eventTimeLogic;
 
+    /** Indicating whether the source operator has been closed. */
+    private boolean closed;
+
     public SourceOperator(
             FunctionWithException<SourceReaderContext, SourceReader<OUT, SplitT>, Exception>
                     readerFactory,
@@ -201,6 +205,24 @@ public class SourceOperator<OUT, SplitT extends SourceSplit> extends AbstractStr
                     public void sendSourceEventToCoordinator(SourceEvent event) {
                         operatorEventGateway.sendEventToCoordinator(new SourceEventWrapper(event));
                     }
+
+                    @Override
+                    public UserCodeClassLoader getUserCodeClassLoader() {
+                        return new UserCodeClassLoader() {
+                            @Override
+                            public ClassLoader asClassLoader() {
+                                return getRuntimeContext().getUserCodeClassLoader();
+                            }
+
+                            @Override
+                            public void registerReleaseHookIfAbsent(
+                                    String releaseHookName, Runnable releaseHook) {
+                                getRuntimeContext()
+                                        .registerUserCodeClassLoaderReleaseHookIfAbsent(
+                                                releaseHookName, releaseHook);
+                            }
+                        };
+                    }
                 };
 
         sourceReader = readerFactory.apply(context);
@@ -247,9 +269,8 @@ public class SourceOperator<OUT, SplitT extends SourceSplit> extends AbstractStr
         }
         if (sourceReader != null) {
             sourceReader.close();
-            // Set the field to null so the reader won't be closed again in dispose().
-            sourceReader = null;
         }
+        closed = true;
         super.close();
     }
 
@@ -257,7 +278,7 @@ public class SourceOperator<OUT, SplitT extends SourceSplit> extends AbstractStr
     public void dispose() throws Exception {
         // We also need to close the source reader to make sure the resources
         // are released if the task does not finish normally.
-        if (sourceReader != null) {
+        if (!closed && sourceReader != null) {
             sourceReader.close();
         }
     }

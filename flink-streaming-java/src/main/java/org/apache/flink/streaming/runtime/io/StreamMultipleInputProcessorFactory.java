@@ -20,12 +20,14 @@ package org.apache.flink.streaming.runtime.io;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.ExecutionConfig;
+import org.apache.flink.api.common.TaskInfo;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.memory.ManagedMemoryUseCase;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.SimpleCounter;
+import org.apache.flink.runtime.checkpoint.InflightDataRescalingDescriptor;
 import org.apache.flink.runtime.io.disk.iomanager.IOManager;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
 import org.apache.flink.runtime.memory.MemoryManager;
@@ -38,7 +40,9 @@ import org.apache.flink.streaming.api.operators.Output;
 import org.apache.flink.streaming.api.operators.sort.MultiInputSortingDataInput;
 import org.apache.flink.streaming.api.operators.sort.MultiInputSortingDataInput.SelectableSortingInputs;
 import org.apache.flink.streaming.api.watermark.Watermark;
+import org.apache.flink.streaming.runtime.io.checkpointing.CheckpointedInputGate;
 import org.apache.flink.streaming.runtime.metrics.WatermarkGauge;
+import org.apache.flink.streaming.runtime.partitioner.StreamPartitioner;
 import org.apache.flink.streaming.runtime.streamrecord.LatencyMarker;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.streamstatus.StatusWatermarkValve;
@@ -49,8 +53,10 @@ import org.apache.flink.streaming.runtime.tasks.SourceOperatorStreamTask;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Function;
 import java.util.stream.IntStream;
 
+import static org.apache.flink.streaming.api.graph.StreamConfig.requiresSorting;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 
@@ -75,7 +81,10 @@ public class StreamMultipleInputProcessorFactory {
             Configuration jobConfig,
             ExecutionConfig executionConfig,
             ClassLoader userClassloader,
-            OperatorChain<?, ?> operatorChain) {
+            OperatorChain<?, ?> operatorChain,
+            InflightDataRescalingDescriptor inflightDataRescalingDescriptor,
+            Function<Integer, StreamPartitioner<?>> gatePartitioners,
+            TaskInfo taskInfo) {
         checkNotNull(operatorChain);
 
         List<Input> operatorInputs = mainOperator.getInputs();
@@ -99,14 +108,17 @@ public class StreamMultipleInputProcessorFactory {
                 StreamConfig.NetworkInputConfig networkInput =
                         (StreamConfig.NetworkInputConfig) configuredInput;
                 inputs[i] =
-                        new StreamTaskNetworkInput<>(
+                        StreamTaskNetworkInputFactory.create(
                                 checkpointedInputGates[networkInput.getInputGateIndex()],
                                 networkInput.getTypeSerializer(),
                                 ioManager,
                                 new StatusWatermarkValve(
                                         checkpointedInputGates[networkInput.getInputGateIndex()]
                                                 .getNumberOfInputChannels()),
-                                i);
+                                i,
+                                inflightDataRescalingDescriptor,
+                                gatePartitioners,
+                                taskInfo);
             } else if (configuredInput instanceof StreamConfig.SourceInputConfig) {
                 StreamConfig.SourceInputConfig sourceInput =
                         (StreamConfig.SourceInputConfig) configuredInput;
@@ -118,40 +130,71 @@ public class StreamMultipleInputProcessorFactory {
 
         InputSelectable inputSelectable =
                 mainOperator instanceof InputSelectable ? (InputSelectable) mainOperator : null;
-        if (streamConfig.shouldSortInputs()) {
+
+        StreamConfig.InputConfig[] inputConfigs = streamConfig.getInputs(userClassloader);
+        boolean anyRequiresSorting =
+                Arrays.stream(inputConfigs).anyMatch(StreamConfig::requiresSorting);
+
+        if (anyRequiresSorting) {
 
             if (inputSelectable != null) {
                 throw new IllegalStateException(
                         "The InputSelectable interface is not supported with sorting inputs");
             }
 
+            StreamTaskInput[] sortingInputs =
+                    IntStream.range(0, inputsCount)
+                            .filter(idx -> requiresSorting(inputConfigs[idx]))
+                            .mapToObj(idx -> inputs[idx])
+                            .toArray(StreamTaskInput[]::new);
+            KeySelector[] sortingInputKeySelectors =
+                    IntStream.range(0, inputsCount)
+                            .filter(idx -> requiresSorting(inputConfigs[idx]))
+                            .mapToObj(idx -> streamConfig.getStatePartitioner(idx, userClassloader))
+                            .toArray(KeySelector[]::new);
+            TypeSerializer[] sortingInputKeySerializers =
+                    IntStream.range(0, inputsCount)
+                            .filter(idx -> requiresSorting(inputConfigs[idx]))
+                            .mapToObj(idx -> streamConfig.getTypeSerializerIn(idx, userClassloader))
+                            .toArray(TypeSerializer[]::new);
+
+            StreamTaskInput[] passThroughInputs =
+                    IntStream.range(0, inputsCount)
+                            .filter(idx -> !requiresSorting(inputConfigs[idx]))
+                            .mapToObj(idx -> inputs[idx])
+                            .toArray(StreamTaskInput[]::new);
+
             SelectableSortingInputs selectableSortingInputs =
                     MultiInputSortingDataInput.wrapInputs(
                             ownerTask,
-                            inputs,
-                            IntStream.range(0, inputsCount)
-                                    .mapToObj(
-                                            idx ->
-                                                    streamConfig.getStatePartitioner(
-                                                            idx, userClassloader))
-                                    .toArray(KeySelector[]::new),
-                            IntStream.range(0, inputsCount)
-                                    .mapToObj(
-                                            idx ->
-                                                    streamConfig.getTypeSerializerIn(
-                                                            idx, userClassloader))
-                                    .toArray(TypeSerializer[]::new),
+                            sortingInputs,
+                            sortingInputKeySelectors,
+                            sortingInputKeySerializers,
                             streamConfig.getStateKeySerializer(userClassloader),
+                            passThroughInputs,
                             memoryManager,
                             ioManager,
                             executionConfig.isObjectReuseEnabled(),
                             streamConfig.getManagedMemoryFractionOperatorUseCaseOfSlot(
-                                    ManagedMemoryUseCase.BATCH_OP,
+                                    ManagedMemoryUseCase.OPERATOR,
                                     taskManagerConfig,
                                     userClassloader),
                             jobConfig);
 
-            inputs = selectableSortingInputs.getSortingInputs();
+            StreamTaskInput<?>[] sortedInputs = selectableSortingInputs.getSortedInputs();
+            StreamTaskInput<?>[] passedThroughInputs =
+                    selectableSortingInputs.getPassThroughInputs();
+            int sortedIndex = 0;
+            int passThroughIndex = 0;
+            for (int i = 0; i < inputs.length; i++) {
+                if (requiresSorting(inputConfigs[i])) {
+                    inputs[i] = sortedInputs[sortedIndex];
+                    sortedIndex++;
+                } else {
+                    inputs[i] = passedThroughInputs[passThroughIndex];
+                    passThroughIndex++;
+                }
+            }
             inputSelectable = selectableSortingInputs.getInputSelectable();
         }
 
@@ -203,7 +246,7 @@ public class StreamMultipleInputProcessorFactory {
         private final StreamStatus[] streamStatuses;
 
         private MultiStreamStreamStatusTracker(int numberOfInputs) {
-            this.streamStatuses = new StreamStatus[numberOfInputs];
+            streamStatuses = new StreamStatus[numberOfInputs];
             Arrays.fill(streamStatuses, StreamStatus.ACTIVE);
         }
 

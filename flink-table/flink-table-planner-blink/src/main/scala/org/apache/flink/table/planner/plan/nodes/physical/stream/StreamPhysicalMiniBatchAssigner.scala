@@ -21,7 +21,7 @@ package org.apache.flink.table.planner.plan.nodes.physical.stream
 import org.apache.flink.table.planner.calcite.FlinkTypeFactory
 import org.apache.flink.table.planner.plan.`trait`.MiniBatchIntervalTraitDef
 import org.apache.flink.table.planner.plan.nodes.exec.stream.StreamExecMiniBatchAssigner
-import org.apache.flink.table.planner.plan.nodes.exec.{ExecEdge, ExecNode}
+import org.apache.flink.table.planner.plan.nodes.exec.{InputProperty, ExecNode}
 
 import org.apache.calcite.plan.{RelOptCluster, RelTraitSet}
 import org.apache.calcite.rel.{RelNode, RelWriter, SingleRel}
@@ -56,15 +56,15 @@ class StreamPhysicalMiniBatchAssigner(
   override def explainTerms(pw: RelWriter): RelWriter = {
     val miniBatchInterval = traits.getTrait(MiniBatchIntervalTraitDef.INSTANCE).getMiniBatchInterval
     super.explainTerms(pw)
-      .item("interval", miniBatchInterval.interval + "ms")
-      .item("mode", miniBatchInterval.mode.toString)
+      .item("interval", miniBatchInterval.getInterval + "ms")
+      .item("mode", miniBatchInterval.getMode.toString)
   }
 
   override def translateToExecNode(): ExecNode[_] = {
     val miniBatchInterval = traits.getTrait(MiniBatchIntervalTraitDef.INSTANCE).getMiniBatchInterval
     new StreamExecMiniBatchAssigner(
       miniBatchInterval,
-      ExecEdge.DEFAULT,
+      InputProperty.DEFAULT,
       FlinkTypeFactory.toLogicalRowType(getRowType),
       getRelDetailedDescription
     )

@@ -23,10 +23,11 @@ import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
-import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializer;
+import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
+import org.apache.flink.util.CloseableIterator;
 import org.apache.flink.util.Collector;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -37,12 +38,14 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
 
@@ -70,7 +73,7 @@ public class KafkaSourceITCase {
                         .setBootstrapServers(KafkaSourceTestEnv.brokerConnectionStrings)
                         .setGroupId("testBasicRead")
                         .setTopics(Arrays.asList(TOPIC1, TOPIC2))
-                        .setDeserializer(new TestingKafkaRecordDeserializer())
+                        .setDeserializer(new TestingKafkaRecordDeserializationSchema())
                         .setStartingOffsets(OffsetsInitializer.earliest())
                         .setBounded(OffsetsInitializer.latest())
                         .build();
@@ -80,6 +83,51 @@ public class KafkaSourceITCase {
         DataStream<PartitionAndValue> stream =
                 env.fromSource(source, WatermarkStrategy.noWatermarks(), "testBasicRead");
         executeAndVerify(env, stream);
+    }
+
+    @Test
+    public void testValueOnlyDeserializer() throws Exception {
+        KafkaSource<Integer> source =
+                KafkaSource.<Integer>builder()
+                        .setBootstrapServers(KafkaSourceTestEnv.brokerConnectionStrings)
+                        .setGroupId("testValueOnlyDeserializer")
+                        .setTopics(Arrays.asList(TOPIC1, TOPIC2))
+                        .setDeserializer(
+                                KafkaRecordDeserializationSchema.valueOnly(
+                                        IntegerDeserializer.class))
+                        .setStartingOffsets(OffsetsInitializer.earliest())
+                        .setBounded(OffsetsInitializer.latest())
+                        .build();
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+        final CloseableIterator<Integer> resultIterator =
+                env.fromSource(
+                                source,
+                                WatermarkStrategy.noWatermarks(),
+                                "testValueOnlyDeserializer")
+                        .executeAndCollect();
+
+        AtomicInteger actualSum = new AtomicInteger();
+        resultIterator.forEachRemaining(actualSum::addAndGet);
+
+        // Calculate the actual sum of values
+        // Values in a partition should start from partition ID, and end with
+        // (NUM_RECORDS_PER_PARTITION - 1)
+        // e.g. Values in partition 5 should be {5, 6, 7, 8, 9}
+        int expectedSum = 0;
+        for (int partition = 0; partition < KafkaSourceTestEnv.NUM_PARTITIONS; partition++) {
+            for (int value = partition;
+                    value < KafkaSourceTestEnv.NUM_RECORDS_PER_PARTITION;
+                    value++) {
+                expectedSum += value;
+            }
+        }
+
+        // Since we have two topics, the expected sum value should be doubled
+        expectedSum *= 2;
+
+        assertEquals(expectedSum, actualSum.get());
     }
 
     // -----------------
@@ -95,15 +143,15 @@ public class KafkaSourceITCase {
         }
     }
 
-    private static class TestingKafkaRecordDeserializer
-            implements KafkaRecordDeserializer<PartitionAndValue> {
+    private static class TestingKafkaRecordDeserializationSchema
+            implements KafkaRecordDeserializationSchema<PartitionAndValue> {
         private static final long serialVersionUID = -3765473065594331694L;
         private transient Deserializer<Integer> deserializer;
 
         @Override
         public void deserialize(
                 ConsumerRecord<byte[], byte[]> record, Collector<PartitionAndValue> collector)
-                throws Exception {
+                throws IOException {
             if (deserializer == null) {
                 deserializer = new IntegerDeserializer();
             }

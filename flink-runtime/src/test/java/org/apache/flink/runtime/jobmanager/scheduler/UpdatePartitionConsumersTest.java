@@ -28,6 +28,7 @@ import org.apache.flink.runtime.executiongraph.utils.SimpleAckingTaskManagerGate
 import org.apache.flink.runtime.io.network.partition.ResultPartitionType;
 import org.apache.flink.runtime.jobgraph.DistributionPattern;
 import org.apache.flink.runtime.jobgraph.JobGraph;
+import org.apache.flink.runtime.jobgraph.JobGraphTestUtils;
 import org.apache.flink.runtime.jobgraph.JobVertex;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
 import org.apache.flink.runtime.scheduler.SchedulerBase;
@@ -110,7 +111,7 @@ public class UpdatePartitionConsumersTest extends TestLogger {
         v4.connectNewDataSetAsInput(
                 v3, DistributionPattern.ALL_TO_ALL, ResultPartitionType.BLOCKING);
 
-        jobGraph = new JobGraph(v1, v2, v3, v4);
+        jobGraph = JobGraphTestUtils.batchJobGraph(v1, v2, v3, v4);
     }
 
     /**
@@ -123,11 +124,11 @@ public class UpdatePartitionConsumersTest extends TestLogger {
                 new SimpleAckingTaskManagerGateway();
 
         final SchedulerBase scheduler =
-                SchedulerTestingUtils.newSchedulerBuilder(jobGraph)
+                SchedulerTestingUtils.newSchedulerBuilder(
+                                jobGraph, ComponentMainThreadExecutorServiceAdapter.forMainThread())
                         .setExecutionSlotAllocatorFactory(
                                 new TestExecutionSlotAllocatorFactory(taskManagerGateway))
                         .build();
-        scheduler.initialize(ComponentMainThreadExecutorServiceAdapter.forMainThread());
 
         final ExecutionVertex ev1 =
                 scheduler.getExecutionVertex(new ExecutionVertexID(v1.getID(), 0));
@@ -189,9 +190,6 @@ public class UpdatePartitionConsumersTest extends TestLogger {
     private void updateState(
             SchedulerBase scheduler, ExecutionVertex vertex, ExecutionState state) {
         scheduler.updateTaskExecutionState(
-                new TaskExecutionState(
-                        jobGraph.getJobID(),
-                        vertex.getCurrentExecutionAttempt().getAttemptId(),
-                        state));
+                new TaskExecutionState(vertex.getCurrentExecutionAttempt().getAttemptId(), state));
     }
 }

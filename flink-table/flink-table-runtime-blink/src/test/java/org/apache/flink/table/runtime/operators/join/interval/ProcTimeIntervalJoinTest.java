@@ -22,9 +22,10 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.streaming.api.operators.co.KeyedCoProcessOperator;
 import org.apache.flink.streaming.util.KeyedTwoInputStreamOperatorTestHarness;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.runtime.keyselector.RowDataKeySelector;
 import org.apache.flink.table.runtime.operators.join.FlinkJoinType;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
-import org.apache.flink.table.runtime.util.BinaryRowDataKeySelector;
+import org.apache.flink.table.utils.HandwrittenSelectorUtil;
 
 import org.junit.Test;
 
@@ -38,8 +39,9 @@ import static org.junit.Assert.assertEquals;
 public class ProcTimeIntervalJoinTest extends TimeIntervalStreamJoinTestBase {
 
     private int keyIdx = 0;
-    private BinaryRowDataKeySelector keySelector =
-            new BinaryRowDataKeySelector(new int[] {keyIdx}, rowType.toRowFieldTypes());
+    private RowDataKeySelector keySelector =
+            HandwrittenSelectorUtil.getRowDataSelector(
+                    new int[] {keyIdx}, rowType.toRowFieldTypes());
     private TypeInformation<RowData> keyType = InternalTypeInfo.ofFields();
 
     /** a.proctime >= b.proctime - 10 and a.proctime <= b.proctime + 20. * */
@@ -47,7 +49,7 @@ public class ProcTimeIntervalJoinTest extends TimeIntervalStreamJoinTestBase {
     public void testProcTimeInnerJoinWithCommonBounds() throws Exception {
         ProcTimeIntervalJoin joinProcessFunc =
                 new ProcTimeIntervalJoin(
-                        FlinkJoinType.INNER, -10, 20, rowType, rowType, generatedFunction);
+                        FlinkJoinType.INNER, -10, 20, rowType, rowType, joinFunction);
         KeyedTwoInputStreamOperatorTestHarness<RowData, RowData, RowData, RowData> testHarness =
                 createTestHarness(joinProcessFunc);
         testHarness.open();
@@ -106,7 +108,7 @@ public class ProcTimeIntervalJoinTest extends TimeIntervalStreamJoinTestBase {
     public void testProcTimeInnerJoinWithNegativeBounds() throws Exception {
         ProcTimeIntervalJoin joinProcessFunc =
                 new ProcTimeIntervalJoin(
-                        FlinkJoinType.INNER, -10, -5, rowType, rowType, generatedFunction);
+                        FlinkJoinType.INNER, -10, -5, rowType, rowType, joinFunction);
 
         KeyedTwoInputStreamOperatorTestHarness<RowData, RowData, RowData, RowData> testHarness =
                 createTestHarness(joinProcessFunc);

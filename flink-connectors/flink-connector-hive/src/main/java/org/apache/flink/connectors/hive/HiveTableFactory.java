@@ -18,9 +18,9 @@
 
 package org.apache.flink.connectors.hive;
 
+import org.apache.flink.table.catalog.CatalogPropertiesUtil;
 import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.catalog.CatalogTableImpl;
-import org.apache.flink.table.catalog.config.CatalogConfig;
 import org.apache.flink.table.factories.TableFactoryUtil;
 import org.apache.flink.table.factories.TableSinkFactory;
 import org.apache.flink.table.factories.TableSourceFactory;
@@ -52,7 +52,7 @@ public class HiveTableFactory implements TableSourceFactory, TableSinkFactory {
         Preconditions.checkArgument(table instanceof CatalogTableImpl);
 
         boolean isGeneric =
-                Boolean.parseBoolean(table.getProperties().get(CatalogConfig.IS_GENERIC));
+                Boolean.parseBoolean(table.getOptions().get(CatalogPropertiesUtil.IS_GENERIC));
 
         // temporary table doesn't have the IS_GENERIC flag but we still consider it generic
         if (!isGeneric && !context.isTemporary()) {
@@ -69,7 +69,7 @@ public class HiveTableFactory implements TableSourceFactory, TableSinkFactory {
         Preconditions.checkArgument(table instanceof CatalogTableImpl);
 
         boolean isGeneric =
-                Boolean.parseBoolean(table.getProperties().get(CatalogConfig.IS_GENERIC));
+                Boolean.parseBoolean(table.getOptions().get(CatalogPropertiesUtil.IS_GENERIC));
 
         // temporary table doesn't have the IS_GENERIC flag but we still consider it generic
         if (!isGeneric && !context.isTemporary()) {

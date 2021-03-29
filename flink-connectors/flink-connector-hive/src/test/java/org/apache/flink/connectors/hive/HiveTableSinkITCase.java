@@ -23,6 +23,7 @@ import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.util.FiniteTestSource;
+import org.apache.flink.table.api.ExplainDetail;
 import org.apache.flink.table.api.SqlDialect;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
@@ -51,6 +52,10 @@ import static org.apache.flink.table.filesystem.FileSystemOptions.PARTITION_TIME
 import static org.apache.flink.table.filesystem.FileSystemOptions.SINK_PARTITION_COMMIT_DELAY;
 import static org.apache.flink.table.filesystem.FileSystemOptions.SINK_PARTITION_COMMIT_POLICY_KIND;
 import static org.apache.flink.table.filesystem.FileSystemOptions.SINK_PARTITION_COMMIT_SUCCESS_FILE_NAME;
+import static org.apache.flink.table.planner.utils.TableTestUtil.readFromResource;
+import static org.apache.flink.table.planner.utils.TableTestUtil.replaceStageId;
+import static org.apache.flink.table.planner.utils.TableTestUtil.replaceStreamNodeId;
+import static org.junit.Assert.assertEquals;
 
 /** Tests {@link HiveTableSink}. */
 public class HiveTableSinkITCase {
@@ -68,6 +73,50 @@ public class HiveTableSinkITCase {
         if (hiveCatalog != null) {
             hiveCatalog.close();
         }
+    }
+
+    @Test
+    public void testHiveTableSinkWithParallelismInBatch() {
+        final TableEnvironment tEnv =
+                HiveTestUtils.createTableEnvWithBlinkPlannerBatchMode(SqlDialect.HIVE);
+        testHiveTableSinkWithParallelismBase(
+                tEnv, "/explain/testHiveTableSinkWithParallelismInBatch.out");
+    }
+
+    @Test
+    public void testHiveTableSinkWithParallelismInStreaming() {
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        final TableEnvironment tEnv =
+                HiveTestUtils.createTableEnvWithBlinkPlannerStreamMode(env, SqlDialect.HIVE);
+        testHiveTableSinkWithParallelismBase(
+                tEnv, "/explain/testHiveTableSinkWithParallelismInStreaming.out");
+    }
+
+    private void testHiveTableSinkWithParallelismBase(
+            final TableEnvironment tEnv, final String expectedResourceFileName) {
+        tEnv.registerCatalog(hiveCatalog.getName(), hiveCatalog);
+        tEnv.useCatalog(hiveCatalog.getName());
+        tEnv.executeSql("create database db1");
+        tEnv.useDatabase("db1");
+
+        tEnv.executeSql(
+                String.format(
+                        "CREATE TABLE test_table ("
+                                + " id int,"
+                                + " real_col int"
+                                + ") TBLPROPERTIES ("
+                                + " 'sink.parallelism' = '8'" // set sink parallelism = 8
+                                + ")"));
+        final String actual =
+                tEnv.explainSql(
+                        "insert into test_table select 1, 1", ExplainDetail.JSON_EXECUTION_PLAN);
+        final String expected = readFromResource(expectedResourceFileName);
+
+        assertEquals(
+                replaceStreamNodeId(replaceStageId(expected)),
+                replaceStreamNodeId(replaceStageId(actual)));
+
+        tEnv.executeSql("drop database db1 cascade");
     }
 
     @Test
@@ -159,17 +208,17 @@ public class HiveTableSinkITCase {
                     assertBatch(
                             "db1.sink_table",
                             Arrays.asList(
-                                    "1,a,b,2020-05-03,7",
-                                    "1,a,b,2020-05-03,7",
-                                    "2,p,q,2020-05-03,8",
-                                    "2,p,q,2020-05-03,8",
-                                    "3,x,y,2020-05-03,9",
-                                    "3,x,y,2020-05-03,9",
-                                    "4,x,y,2020-05-03,10",
-                                    "4,x,y,2020-05-03,10",
-                                    "5,x,y,2020-05-03,11",
-                                    "5,x,y,2020-05-03,11",
-                                    "6,a,b,2020-05-03,12"));
+                                    "+I[1, a, b, 2020-05-03, 7]",
+                                    "+I[1, a, b, 2020-05-03, 7]",
+                                    "+I[2, p, q, 2020-05-03, 8]",
+                                    "+I[2, p, q, 2020-05-03, 8]",
+                                    "+I[3, x, y, 2020-05-03, 9]",
+                                    "+I[3, x, y, 2020-05-03, 9]",
+                                    "+I[4, x, y, 2020-05-03, 10]",
+                                    "+I[4, x, y, 2020-05-03, 10]",
+                                    "+I[5, x, y, 2020-05-03, 11]",
+                                    "+I[5, x, y, 2020-05-03, 11]",
+                                    "+I[6, a, b, 2020-05-03, 12]"));
                 });
     }
 
@@ -255,16 +304,16 @@ public class HiveTableSinkITCase {
             assertBatch(
                     "db1.sink_table",
                     Arrays.asList(
-                            "1,a,b,2020-05-03,7",
-                            "1,a,b,2020-05-03,7",
-                            "2,p,q,2020-05-03,8",
-                            "2,p,q,2020-05-03,8",
-                            "3,x,y,2020-05-03,9",
-                            "3,x,y,2020-05-03,9",
-                            "4,x,y,2020-05-03,10",
-                            "4,x,y,2020-05-03,10",
-                            "5,x,y,2020-05-03,11",
-                            "5,x,y,2020-05-03,11"));
+                            "+I[1, a, b, 2020-05-03, 7]",
+                            "+I[1, a, b, 2020-05-03, 7]",
+                            "+I[2, p, q, 2020-05-03, 8]",
+                            "+I[2, p, q, 2020-05-03, 8]",
+                            "+I[3, x, y, 2020-05-03, 9]",
+                            "+I[3, x, y, 2020-05-03, 9]",
+                            "+I[4, x, y, 2020-05-03, 10]",
+                            "+I[4, x, y, 2020-05-03, 10]",
+                            "+I[5, x, y, 2020-05-03, 11]",
+                            "+I[5, x, y, 2020-05-03, 11]"));
 
             // using batch table env to query.
             List<String> results = new ArrayList<>();
@@ -278,16 +327,16 @@ public class HiveTableSinkITCase {
             results.sort(String::compareTo);
             Assert.assertEquals(
                     Arrays.asList(
-                            "1,a,b,2020-05-03,7",
-                            "1,a,b,2020-05-03,7",
-                            "2,p,q,2020-05-03,8",
-                            "2,p,q,2020-05-03,8",
-                            "3,x,y,2020-05-03,9",
-                            "3,x,y,2020-05-03,9",
-                            "4,x,y,2020-05-03,10",
-                            "4,x,y,2020-05-03,10",
-                            "5,x,y,2020-05-03,11",
-                            "5,x,y,2020-05-03,11"),
+                            "+I[1, a, b, 2020-05-03, 7]",
+                            "+I[1, a, b, 2020-05-03, 7]",
+                            "+I[2, p, q, 2020-05-03, 8]",
+                            "+I[2, p, q, 2020-05-03, 8]",
+                            "+I[3, x, y, 2020-05-03, 9]",
+                            "+I[3, x, y, 2020-05-03, 9]",
+                            "+I[4, x, y, 2020-05-03, 10]",
+                            "+I[4, x, y, 2020-05-03, 10]",
+                            "+I[5, x, y, 2020-05-03, 11]",
+                            "+I[5, x, y, 2020-05-03, 11]"),
                     results);
 
             pathConsumer.accept(

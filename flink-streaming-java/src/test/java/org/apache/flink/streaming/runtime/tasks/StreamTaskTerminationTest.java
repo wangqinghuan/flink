@@ -52,6 +52,7 @@ import org.apache.flink.runtime.query.KvStateRegistry;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
 import org.apache.flink.runtime.shuffle.ShuffleEnvironment;
 import org.apache.flink.runtime.state.AbstractKeyedStateBackend;
+import org.apache.flink.runtime.state.CheckpointStorage;
 import org.apache.flink.runtime.state.CheckpointStorageAccess;
 import org.apache.flink.runtime.state.CheckpointStreamFactory;
 import org.apache.flink.runtime.state.CompletedCheckpointStorageLocation;
@@ -167,7 +168,6 @@ public class StreamTaskTerminationTest extends TestLogger {
                         0,
                         Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
                         Collections.<InputGateDeploymentDescriptor>emptyList(),
-                        0,
                         MemoryManagerBuilder.newBuilder().setMemorySize(32L * 1024L).build(),
                         new IOManagerAsync(),
                         shuffleEnvironment,
@@ -199,8 +199,7 @@ public class StreamTaskTerminationTest extends TestLogger {
         task.triggerCheckpointBarrier(
                 checkpointId,
                 checkpointTimestamp,
-                CheckpointOptions.forCheckpointWithDefaultLocation(),
-                false);
+                CheckpointOptions.forCheckpointWithDefaultLocation());
 
         // wait until the task has completed execution
         taskRun.get();
@@ -260,7 +259,7 @@ public class StreamTaskTerminationTest extends TestLogger {
         private static final long serialVersionUID = 4517845269225218312L;
     }
 
-    static class BlockingStateBackend implements StateBackend {
+    static class BlockingStateBackend implements StateBackend, CheckpointStorage {
 
         private static final long serialVersionUID = -5053068148933314100L;
 

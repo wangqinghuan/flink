@@ -36,7 +36,6 @@ import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobmaster.AllocatedSlotReport;
 import org.apache.flink.runtime.jobmaster.JobMasterId;
 import org.apache.flink.runtime.messages.Acknowledge;
-import org.apache.flink.runtime.messages.TaskBackPressureResponse;
 import org.apache.flink.runtime.operators.coordination.OperatorEvent;
 import org.apache.flink.runtime.resourcemanager.ResourceManagerId;
 import org.apache.flink.runtime.rest.messages.LogInfo;
@@ -75,9 +74,6 @@ public interface TaskExecutorGateway extends RpcGateway, TaskExecutorOperatorEve
             String targetAddress,
             ResourceManagerId resourceManagerId,
             @RpcTimeout Time timeout);
-
-    CompletableFuture<TaskBackPressureResponse> requestTaskBackPressure(
-            ExecutionAttemptID executionAttemptId, int requestId, @RpcTimeout Time timeout);
 
     /**
      * Submit a {@link Task} to the {@link TaskExecutor}.
@@ -133,16 +129,13 @@ public interface TaskExecutorGateway extends RpcGateway, TaskExecutorOperatorEve
      * @param checkpointID unique id for the checkpoint
      * @param checkpointTimestamp is the timestamp when the checkpoint has been initiated
      * @param checkpointOptions for performing the checkpoint
-     * @param advanceToEndOfEventTime Flag indicating if the source should inject a {@code
-     *     MAX_WATERMARK} in the pipeline to fire any registered event-time timers
      * @return Future acknowledge if the checkpoint has been successfully triggered
      */
     CompletableFuture<Acknowledge> triggerCheckpoint(
             ExecutionAttemptID executionAttemptID,
             long checkpointID,
             long checkpointTimestamp,
-            CheckpointOptions checkpointOptions,
-            boolean advanceToEndOfEventTime);
+            CheckpointOptions checkpointOptions);
 
     /**
      * Confirm a checkpoint for the given task. The checkpoint is identified by the checkpoint ID
@@ -218,6 +211,14 @@ public interface TaskExecutorGateway extends RpcGateway, TaskExecutorOperatorEve
      */
     CompletableFuture<Acknowledge> freeSlot(
             final AllocationID allocationId, final Throwable cause, @RpcTimeout final Time timeout);
+
+    /**
+     * Frees all currently inactive slot allocated for the given job.
+     *
+     * @param jobId job for which all inactive slots should be released
+     * @param timeout for the operation
+     */
+    void freeInactiveSlots(JobID jobId, @RpcTimeout Time timeout);
 
     /**
      * Requests the file upload of the specified type to the cluster's {@link BlobServer}.

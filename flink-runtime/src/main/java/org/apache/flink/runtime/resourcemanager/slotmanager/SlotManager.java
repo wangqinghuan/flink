@@ -27,9 +27,11 @@ import org.apache.flink.runtime.resourcemanager.SlotRequest;
 import org.apache.flink.runtime.resourcemanager.WorkerResourceSpec;
 import org.apache.flink.runtime.resourcemanager.exceptions.ResourceManagerException;
 import org.apache.flink.runtime.resourcemanager.registration.TaskExecutorConnection;
+import org.apache.flink.runtime.rest.messages.taskmanager.SlotInfo;
 import org.apache.flink.runtime.slots.ResourceRequirements;
 import org.apache.flink.runtime.taskexecutor.SlotReport;
 
+import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.Executor;
 
@@ -69,6 +71,8 @@ public interface SlotManager extends AutoCloseable {
     ResourceProfile getFreeResource();
 
     ResourceProfile getFreeResourceOf(InstanceID instanceID);
+
+    Collection<SlotInfo> getAllocatedSlotsOf(InstanceID instanceID);
 
     int getNumberPendingSlotRequests();
 
@@ -122,11 +126,16 @@ public interface SlotManager extends AutoCloseable {
      *
      * @param taskExecutorConnection for the new task manager
      * @param initialSlotReport for the new task manager
+     * @param totalResourceProfile for the new task manager
+     * @param defaultSlotResourceProfile for the new task manager
      * @return True if the task manager has not been registered before and is registered
      *     successfully; otherwise false
      */
     boolean registerTaskManager(
-            TaskExecutorConnection taskExecutorConnection, SlotReport initialSlotReport);
+            TaskExecutorConnection taskExecutorConnection,
+            SlotReport initialSlotReport,
+            ResourceProfile totalResourceProfile,
+            ResourceProfile defaultSlotResourceProfile);
 
     /**
      * Unregisters the task manager identified by the given instance id and its associated slots

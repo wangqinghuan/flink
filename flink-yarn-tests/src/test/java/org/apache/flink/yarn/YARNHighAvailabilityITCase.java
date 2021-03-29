@@ -87,6 +87,7 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 import static org.apache.flink.util.Preconditions.checkState;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -150,7 +151,7 @@ public class YARNHighAvailabilityITCase extends YarnTestBase {
      * Tests that Yarn will restart a killed {@link YarnSessionClusterEntrypoint} which will then
      * resume a persisted {@link JobGraph}.
      */
-    @Test
+    @Test(timeout = 1_000 * 60 * 30)
     public void testKillYarnSessionClusterEntrypoint() throws Exception {
         runTest(
                 () -> {
@@ -185,7 +186,7 @@ public class YARNHighAvailabilityITCase extends YarnTestBase {
                 });
     }
 
-    @Test
+    @Test(timeout = 1_000 * 60 * 30)
     public void testJobRecoversAfterKillingTaskManager() throws Exception {
         runTest(
                 () -> {
@@ -205,6 +206,41 @@ public class YARNHighAvailabilityITCase extends YarnTestBase {
                         killApplicationAndWait(restClusterClient.getClusterId());
                     } finally {
                         restClusterClient.close();
+                    }
+                });
+    }
+
+    /**
+     * Tests that we can retrieve an HA enabled cluster by only specifying the application id if no
+     * other high-availability.cluster-id has been configured. See FLINK-20866.
+     */
+    @Test(timeout = 1_000 * 60 * 30)
+    public void testClusterClientRetrieval() throws Exception {
+        runTest(
+                () -> {
+                    final YarnClusterDescriptor yarnClusterDescriptor =
+                            setupYarnClusterDescriptor();
+                    final RestClusterClient<ApplicationId> restClusterClient =
+                            deploySessionCluster(yarnClusterDescriptor);
+
+                    ClusterClient<ApplicationId> newClusterClient = null;
+                    try {
+                        final ApplicationId clusterId = restClusterClient.getClusterId();
+
+                        final YarnClusterDescriptor newClusterDescriptor =
+                                setupYarnClusterDescriptor();
+                        newClusterClient =
+                                newClusterDescriptor.retrieve(clusterId).getClusterClient();
+
+                        assertThat(newClusterClient.listJobs().join(), is(empty()));
+
+                        newClusterClient.shutDownCluster();
+                    } finally {
+                        restClusterClient.close();
+
+                        if (newClusterClient != null) {
+                            newClusterClient.close();
+                        }
                     }
                 });
     }
@@ -271,8 +307,8 @@ public class YARNHighAvailabilityITCase extends YarnTestBase {
 
         CommonTestUtils.waitUntilCondition(
                 () ->
-                        !yarnClient
-                                .getApplications(
+                        !getApplicationReportWithRetryOnNPE(
+                                        yarnClient,
                                         EnumSet.of(
                                                 YarnApplicationState.KILLED,
                                                 YarnApplicationState.FINISHED))

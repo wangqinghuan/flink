@@ -27,6 +27,7 @@ import org.apache.flink.configuration.MemorySize;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.configuration.TaskManagerOptions;
 import org.apache.flink.runtime.clusterframework.types.ResourceProfile;
+import org.apache.flink.runtime.externalresource.ExternalResourceUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +59,10 @@ public class TaskExecutorResourceUtils {
                     TaskManagerOptions.JVM_OVERHEAD_MAX,
                     TaskManagerOptions.JVM_OVERHEAD_FRACTION);
 
+    private static final MemorySize LOCAL_EXECUTION_TASK_MEMORY =
+            MemorySize.ofMebiBytes(1024 * 1024);
+    private static final double LOCAL_EXECUTION_CPU_CORES = 1000000.0;
+
     static final MemorySize DEFAULT_SHUFFLE_MEMORY_SIZE = MemorySize.parse("64m");
     static final MemorySize DEFAULT_MANAGED_MEMORY_SIZE = MemorySize.parse("128m");
 
@@ -74,7 +79,8 @@ public class TaskExecutorResourceUtils {
                 config.get(TaskManagerOptions.TASK_HEAP_MEMORY),
                 config.get(TaskManagerOptions.TASK_OFF_HEAP_MEMORY),
                 config.get(TaskManagerOptions.NETWORK_MEMORY_MIN),
-                config.get(TaskManagerOptions.MANAGED_MEMORY_SIZE));
+                config.get(TaskManagerOptions.MANAGED_MEMORY_SIZE),
+                ExternalResourceUtils.getExternalResourcesCollection(config));
     }
 
     private static void checkTaskExecutorResourceConfigSet(Configuration config) {
@@ -100,21 +106,37 @@ public class TaskExecutorResourceUtils {
         }
     }
 
-    static ResourceProfile generateDefaultSlotResourceProfile(
+    /**
+     * This must be consist with {@link
+     * org.apache.flink.runtime.resourcemanager.slotmanager.SlotManagerUtils#generateDefaultSlotResourceProfile}.
+     */
+    @VisibleForTesting
+    public static ResourceProfile generateDefaultSlotResourceProfile(
             TaskExecutorResourceSpec taskExecutorResourceSpec, int numberOfSlots) {
-        return ResourceProfile.newBuilder()
-                .setCpuCores(taskExecutorResourceSpec.getCpuCores().divide(numberOfSlots))
-                .setTaskHeapMemory(taskExecutorResourceSpec.getTaskHeapSize().divide(numberOfSlots))
-                .setTaskOffHeapMemory(
-                        taskExecutorResourceSpec.getTaskOffHeapSize().divide(numberOfSlots))
-                .setManagedMemory(
-                        taskExecutorResourceSpec.getManagedMemorySize().divide(numberOfSlots))
-                .setNetworkMemory(
-                        taskExecutorResourceSpec.getNetworkMemSize().divide(numberOfSlots))
-                .build();
+        final ResourceProfile.Builder resourceProfileBuilder =
+                ResourceProfile.newBuilder()
+                        .setCpuCores(taskExecutorResourceSpec.getCpuCores().divide(numberOfSlots))
+                        .setTaskHeapMemory(
+                                taskExecutorResourceSpec.getTaskHeapSize().divide(numberOfSlots))
+                        .setTaskOffHeapMemory(
+                                taskExecutorResourceSpec.getTaskOffHeapSize().divide(numberOfSlots))
+                        .setManagedMemory(
+                                taskExecutorResourceSpec
+                                        .getManagedMemorySize()
+                                        .divide(numberOfSlots))
+                        .setNetworkMemory(
+                                taskExecutorResourceSpec.getNetworkMemSize().divide(numberOfSlots));
+        taskExecutorResourceSpec
+                .getExtendedResources()
+                .forEach(
+                        (name, resource) ->
+                                resourceProfileBuilder.setExtendedResource(
+                                        resource.divide(numberOfSlots)));
+        return resourceProfileBuilder.build();
     }
 
-    static ResourceProfile generateTotalAvailableResourceProfile(
+    @VisibleForTesting
+    public static ResourceProfile generateTotalAvailableResourceProfile(
             TaskExecutorResourceSpec taskExecutorResourceSpec) {
         return ResourceProfile.newBuilder()
                 .setCpuCores(taskExecutorResourceSpec.getCpuCores())
@@ -122,6 +144,7 @@ public class TaskExecutorResourceUtils {
                 .setTaskOffHeapMemory(taskExecutorResourceSpec.getTaskOffHeapSize())
                 .setManagedMemory(taskExecutorResourceSpec.getManagedMemorySize())
                 .setNetworkMemory(taskExecutorResourceSpec.getNetworkMemSize())
+                .setExtendedResources(taskExecutorResourceSpec.getExtendedResources().values())
                 .build();
     }
 
@@ -134,11 +157,12 @@ public class TaskExecutorResourceUtils {
     public static Configuration adjustForLocalExecution(Configuration config) {
         UNUSED_CONFIG_OPTIONS.forEach(option -> warnOptionHasNoEffectIfSet(config, option));
 
-        setConfigOptionToPassedMaxIfNotSet(config, TaskManagerOptions.CPU_CORES, Double.MAX_VALUE);
         setConfigOptionToPassedMaxIfNotSet(
-                config, TaskManagerOptions.TASK_HEAP_MEMORY, MemorySize.MAX_VALUE);
+                config, TaskManagerOptions.CPU_CORES, LOCAL_EXECUTION_CPU_CORES);
         setConfigOptionToPassedMaxIfNotSet(
-                config, TaskManagerOptions.TASK_OFF_HEAP_MEMORY, MemorySize.MAX_VALUE);
+                config, TaskManagerOptions.TASK_HEAP_MEMORY, LOCAL_EXECUTION_TASK_MEMORY);
+        setConfigOptionToPassedMaxIfNotSet(
+                config, TaskManagerOptions.TASK_OFF_HEAP_MEMORY, LOCAL_EXECUTION_TASK_MEMORY);
 
         adjustNetworkMemoryForLocalExecution(config);
         setConfigOptionToDefaultIfNotSet(

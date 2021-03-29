@@ -20,7 +20,7 @@ package org.apache.flink.table.planner.plan.rules.physical.stream
 
 import org.apache.flink.table.api.config.ExecutionConfigOptions
 import org.apache.flink.table.planner.plan.`trait`.{MiniBatchInterval, MiniBatchIntervalTrait, MiniBatchIntervalTraitDef, MiniBatchMode}
-import org.apache.flink.table.planner.plan.nodes.physical.stream.{StreamExecGroupWindowAggregate, StreamPhysicalDataStreamScan, StreamPhysicalLegacyTableSourceScan, StreamPhysicalMiniBatchAssigner, StreamPhysicalRel, StreamPhysicalTableSourceScan, StreamPhysicalWatermarkAssigner}
+import org.apache.flink.table.planner.plan.nodes.physical.stream.{StreamPhysicalGroupWindowAggregate, StreamPhysicalDataStreamScan, StreamPhysicalLegacyTableSourceScan, StreamPhysicalMiniBatchAssigner, StreamPhysicalRel, StreamPhysicalTableSourceScan, StreamPhysicalWatermarkAssigner}
 import org.apache.flink.table.planner.plan.utils.FlinkRelOptUtil
 
 import org.apache.calcite.plan.RelOptRule._
@@ -68,7 +68,7 @@ class MiniBatchIntervalInferRule extends RelOptRule(
       ExecutionConfigOptions.TABLE_EXEC_MINIBATCH_ENABLED)
 
     val updatedTrait = rel match {
-      case _: StreamExecGroupWindowAggregate =>
+      case _: StreamPhysicalGroupWindowAggregate =>
         // TODO introduce mini-batch window aggregate later
         MiniBatchIntervalTrait.NO_MINIBATCH
 
@@ -78,7 +78,8 @@ class MiniBatchIntervalInferRule extends RelOptRule(
 
       case _ => if (rel.requireWatermark && miniBatchEnabled) {
         val mergedInterval = FlinkRelOptUtil.mergeMiniBatchInterval(
-          miniBatchIntervalTrait.getMiniBatchInterval, MiniBatchInterval(0, MiniBatchMode.RowTime))
+          miniBatchIntervalTrait.getMiniBatchInterval,
+          new MiniBatchInterval(0, MiniBatchMode.RowTime))
         new MiniBatchIntervalTrait(mergedInterval)
       } else {
         miniBatchIntervalTrait
@@ -121,7 +122,7 @@ class MiniBatchIntervalInferRule extends RelOptRule(
     val mode = node.getTraitSet
       .getTrait(MiniBatchIntervalTraitDef.INSTANCE)
       .getMiniBatchInterval
-      .mode
+      .getMode
     node match {
       case _: StreamPhysicalDataStreamScan | _: StreamPhysicalLegacyTableSourceScan |
            _: StreamPhysicalTableSourceScan =>

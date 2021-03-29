@@ -20,6 +20,7 @@ package org.apache.flink.runtime.resourcemanager;
 
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.JobID;
+import org.apache.flink.api.common.JobStatus;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.runtime.blob.TransientBlobKey;
@@ -71,6 +72,7 @@ import org.apache.flink.runtime.taskexecutor.FileType;
 import org.apache.flink.runtime.taskexecutor.SlotReport;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorGateway;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorHeartbeatPayload;
+import org.apache.flink.runtime.taskexecutor.TaskExecutorRegistrationRejection;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorRegistrationSuccess;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.FlinkException;
@@ -145,7 +147,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 
     private final ClusterInformation clusterInformation;
 
-    private final ResourceManagerMetricGroup resourceManagerMetricGroup;
+    protected final ResourceManagerMetricGroup resourceManagerMetricGroup;
 
     protected final Executor ioExecutor;
 
@@ -157,6 +159,8 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 
     /** The heartbeat manager with job managers. */
     private HeartbeatManager<Void, Void> jobManagerHeartbeatManager;
+
+    private boolean hasLeadership = false;
 
     /**
      * Represents asynchronous state clearing work.
@@ -247,7 +251,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
             leaderElectionService.start(this);
             jobLeaderIdService.start(new JobLeaderIdActionsImpl());
 
-            registerTaskExecutorMetrics();
+            registerMetrics();
         } catch (Exception e) {
             handleStartResourceManagerServicesException(e);
         }
@@ -390,7 +394,8 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
                                                         + "This indicates that a JobMaster leader change has happened.",
                                                 leadingJobMasterId, jobMasterId);
                                 log.debug(declineMessage);
-                                return new RegistrationResponse.Decline(declineMessage);
+                                return new RegistrationResponse.Failure(
+                                        new FlinkException(declineMessage));
                             }
                         },
                         getMainThreadExecutor());
@@ -412,7 +417,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
                                     jobManagerAddress);
                         }
 
-                        return new RegistrationResponse.Decline(throwable.getMessage());
+                        return new RegistrationResponse.Failure(throwable);
                     } else {
                         return registrationResponse;
                     }
@@ -438,7 +443,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
                     if (taskExecutorGatewayFuture == taskExecutorGatewayFutures.get(resourceId)) {
                         taskExecutorGatewayFutures.remove(resourceId);
                         if (throwable != null) {
-                            return new RegistrationResponse.Decline(throwable.getMessage());
+                            return new RegistrationResponse.Failure(throwable);
                         } else {
                             return registerTaskExecutorInternal(
                                     taskExecutorGateway, taskExecutorRegistration);
@@ -447,8 +452,8 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
                         log.debug(
                                 "Ignoring outdated TaskExecutorGateway connection for {}.",
                                 resourceId.getStringWithMetadata());
-                        return new RegistrationResponse.Decline(
-                                "Decline outdated task executor registration.");
+                        return new RegistrationResponse.Failure(
+                                new FlinkException("Decline outdated task executor registration."));
                     }
                 },
                 getMainThreadExecutor());
@@ -464,7 +469,11 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
                 taskExecutors.get(taskManagerResourceId);
 
         if (workerTypeWorkerRegistration.getInstanceID().equals(taskManagerRegistrationId)) {
-            if (slotManager.registerTaskManager(workerTypeWorkerRegistration, slotReport)) {
+            if (slotManager.registerTaskManager(
+                    workerTypeWorkerRegistration,
+                    slotReport,
+                    workerTypeWorkerRegistration.getTotalResourceProfile(),
+                    workerTypeWorkerRegistration.getDefaultSlotResourceProfile())) {
                 onWorkerRegistered(workerTypeWorkerRegistration.getWorker());
             }
             return CompletableFuture.completedFuture(Acknowledge.get());
@@ -498,8 +507,14 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
     }
 
     @Override
-    public void disconnectJobManager(final JobID jobId, final Exception cause) {
-        closeJobManagerConnection(jobId, cause);
+    public void disconnectJobManager(
+            final JobID jobId, JobStatus jobStatus, final Exception cause) {
+        closeJobManagerConnection(
+                jobId,
+                jobStatus.isGloballyTerminalState()
+                        ? ResourceRequirementHandling.CLEAR
+                        : ResourceRequirementHandling.RETAIN,
+                cause);
     }
 
     @Override
@@ -663,7 +678,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
     }
 
     @Override
-    public CompletableFuture<TaskManagerInfo> requestTaskManagerInfo(
+    public CompletableFuture<TaskManagerInfoWithSlots> requestTaskManagerDetailsInfo(
             ResourceID resourceId, Time timeout) {
 
         final WorkerRegistration<WorkerType> taskExecutor = taskExecutors.get(resourceId);
@@ -672,21 +687,23 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
             return FutureUtils.completedExceptionally(new UnknownTaskExecutorException(resourceId));
         } else {
             final InstanceID instanceId = taskExecutor.getInstanceID();
-            final TaskManagerInfo taskManagerInfo =
-                    new TaskManagerInfo(
-                            resourceId,
-                            taskExecutor.getTaskExecutorGateway().getAddress(),
-                            taskExecutor.getDataPort(),
-                            taskExecutor.getJmxPort(),
-                            taskManagerHeartbeatManager.getLastHeartbeatFrom(resourceId),
-                            slotManager.getNumberRegisteredSlotsOf(instanceId),
-                            slotManager.getNumberFreeSlotsOf(instanceId),
-                            slotManager.getRegisteredResourceOf(instanceId),
-                            slotManager.getFreeResourceOf(instanceId),
-                            taskExecutor.getHardwareDescription(),
-                            taskExecutor.getMemoryConfiguration());
+            final TaskManagerInfoWithSlots taskManagerInfoWithSlots =
+                    new TaskManagerInfoWithSlots(
+                            new TaskManagerInfo(
+                                    resourceId,
+                                    taskExecutor.getTaskExecutorGateway().getAddress(),
+                                    taskExecutor.getDataPort(),
+                                    taskExecutor.getJmxPort(),
+                                    taskManagerHeartbeatManager.getLastHeartbeatFrom(resourceId),
+                                    slotManager.getNumberRegisteredSlotsOf(instanceId),
+                                    slotManager.getNumberFreeSlotsOf(instanceId),
+                                    slotManager.getRegisteredResourceOf(instanceId),
+                                    slotManager.getFreeResourceOf(instanceId),
+                                    taskExecutor.getHardwareDescription(),
+                                    taskExecutor.getMemoryConfiguration()),
+                            slotManager.getAllocatedSlotsOf(instanceId));
 
-            return CompletableFuture.completedFuture(taskManagerInfo);
+            return CompletableFuture.completedFuture(taskManagerInfoWithSlots);
         }
     }
 
@@ -861,8 +878,9 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
                         jobManagerAddress);
             } else {
                 // tell old job manager that he is no longer the job leader
-                disconnectJobManager(
+                closeJobManagerConnection(
                         oldJobManagerRegistration.getJobID(),
+                        ResourceRequirementHandling.RETAIN,
                         new Exception("New job leader for job " + jobId + " found."));
 
                 JobManagerRegistration jobManagerRegistration =
@@ -937,7 +955,8 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
                             + "not recognize it",
                     taskExecutorResourceId.getStringWithMetadata(),
                     taskExecutorAddress);
-            return new RegistrationResponse.Decline("unrecognized TaskExecutor");
+            return new TaskExecutorRegistrationRejection(
+                    "The ResourceManager does not recognize this TaskExecutor.");
         } else {
             WorkerRegistration<WorkerType> registration =
                     new WorkerRegistration<>(
@@ -946,7 +965,9 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
                             taskExecutorRegistration.getDataPort(),
                             taskExecutorRegistration.getJmxPort(),
                             taskExecutorRegistration.getHardwareDescription(),
-                            taskExecutorRegistration.getMemoryConfiguration());
+                            taskExecutorRegistration.getMemoryConfiguration(),
+                            taskExecutorRegistration.getTotalResourceProfile(),
+                            taskExecutorRegistration.getDefaultSlotResourceProfile());
 
             log.info(
                     "Registering TaskManager with ResourceID {} ({}) at ResourceManager",
@@ -974,7 +995,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
         }
     }
 
-    private void registerTaskExecutorMetrics() {
+    protected void registerMetrics() {
         resourceManagerMetricGroup.gauge(
                 MetricNames.NUM_REGISTERED_TASK_MANAGERS, () -> (long) taskExecutors.size());
     }
@@ -999,9 +1020,12 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
      * manager has failed.
      *
      * @param jobId identifying the job whose leader shall be disconnected.
+     * @param resourceRequirementHandling indicating how existing resource requirements for the
+     *     corresponding job should be handled
      * @param cause The exception which cause the JobManager failed.
      */
-    protected void closeJobManagerConnection(JobID jobId, Exception cause) {
+    protected void closeJobManagerConnection(
+            JobID jobId, ResourceRequirementHandling resourceRequirementHandling, Exception cause) {
         JobManagerRegistration jobManagerRegistration = jobManagerRegistrations.remove(jobId);
 
         if (jobManagerRegistration != null) {
@@ -1020,8 +1044,10 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 
             jmResourceIdRegistrations.remove(jobManagerResourceId);
 
-            slotManager.processResourceRequirements(
-                    ResourceRequirements.empty(jobId, jobMasterGateway.getAddress()));
+            if (resourceRequirementHandling == ResourceRequirementHandling.CLEAR) {
+                slotManager.processResourceRequirements(
+                        ResourceRequirements.empty(jobId, jobMasterGateway.getAddress()));
+            }
 
             // tell the job manager about the disconnect
             jobMasterGateway.disconnectResourceManager(getFencingToken(), cause);
@@ -1072,7 +1098,10 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
         }
 
         if (jobManagerRegistrations.containsKey(jobId)) {
-            disconnectJobManager(jobId, new Exception("Job " + jobId + "was removed"));
+            closeJobManagerConnection(
+                    jobId,
+                    ResourceRequirementHandling.CLEAR,
+                    new Exception("Job " + jobId + "was removed"));
         }
     }
 
@@ -1081,7 +1110,10 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
             JobManagerRegistration jobManagerRegistration = jobManagerRegistrations.get(jobId);
 
             if (Objects.equals(jobManagerRegistration.getJobMasterId(), oldJobMasterId)) {
-                disconnectJobManager(jobId, new Exception("Job leader lost leadership."));
+                closeJobManagerConnection(
+                        jobId,
+                        ResourceRequirementHandling.RETAIN,
+                        new Exception("Job leader lost leadership."));
             } else {
                 log.debug(
                         "Discarding job leader lost leadership, because a new job leader was found for job {}. ",
@@ -1119,6 +1151,11 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
             // unregister in order to clean up potential left over state
             slotManager.unregisterTaskManager(instanceId, cause);
         }
+    }
+
+    private enum ResourceRequirementHandling {
+        RETAIN,
+        CLEAR
     }
 
     // ------------------------------------------------------------------------
@@ -1194,7 +1231,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 
             startServicesOnLeadership();
 
-            return prepareLeadershipAsync().thenApply(ignored -> true);
+            return prepareLeadershipAsync().thenApply(ignored -> hasLeadership = true);
         } else {
             return CompletableFuture.completedFuture(false);
         }
@@ -1217,6 +1254,8 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
     public void revokeLeadership() {
         runAsyncWithoutFencing(
                 () -> {
+                    hasLeadership = false;
+
                     log.info(
                             "ResourceManager {} was revoked leadership. Clearing fencing token.",
                             getAddress());
@@ -1262,6 +1301,10 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
         onFatalError(
                 new ResourceManagerException(
                         "Received an error from the LeaderElectionService.", exception));
+    }
+
+    protected boolean hasLeadership() {
+        return hasLeadership;
     }
 
     // ------------------------------------------------------------------------
@@ -1489,6 +1532,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
                 if (jobManagerRegistration != null) {
                     closeJobManagerConnection(
                             jobManagerRegistration.getJobID(),
+                            ResourceRequirementHandling.RETAIN,
                             new TimeoutException(
                                     "The heartbeat of JobManager with id "
                                             + resourceID.getStringWithMetadata()

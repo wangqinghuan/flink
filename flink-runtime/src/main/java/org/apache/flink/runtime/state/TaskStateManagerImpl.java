@@ -21,6 +21,7 @@ package org.apache.flink.runtime.state;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.runtime.checkpoint.CheckpointMetaData;
 import org.apache.flink.runtime.checkpoint.CheckpointMetrics;
+import org.apache.flink.runtime.checkpoint.InflightDataRescalingDescriptor;
 import org.apache.flink.runtime.checkpoint.JobManagerTaskRestore;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.runtime.checkpoint.PrioritizedOperatorSubtaskState;
@@ -122,7 +123,30 @@ public class TaskStateManagerImpl implements TaskStateManager {
                 jobId, executionAttemptID, checkpointId, checkpointMetrics, acknowledgedState);
     }
 
-    @Nonnull
+    @Override
+    public void reportIncompleteTaskStateSnapshots(
+            CheckpointMetaData checkpointMetaData, CheckpointMetrics checkpointMetrics) {
+
+        checkpointResponder.reportCheckpointMetrics(
+                jobId, executionAttemptID, checkpointMetaData.getCheckpointId(), checkpointMetrics);
+    }
+
+    @Override
+    public InflightDataRescalingDescriptor getInputRescalingDescriptor() {
+        if (jobManagerTaskRestore == null) {
+            return InflightDataRescalingDescriptor.NO_RESCALE;
+        }
+        return jobManagerTaskRestore.getTaskStateSnapshot().getInputRescalingDescriptor();
+    }
+
+    @Override
+    public InflightDataRescalingDescriptor getOutputRescalingDescriptor() {
+        if (jobManagerTaskRestore == null) {
+            return InflightDataRescalingDescriptor.NO_RESCALE;
+        }
+        return jobManagerTaskRestore.getTaskStateSnapshot().getOutputRescalingDescriptor();
+    }
+
     @Override
     public PrioritizedOperatorSubtaskState prioritizedOperatorState(OperatorID operatorID) {
 

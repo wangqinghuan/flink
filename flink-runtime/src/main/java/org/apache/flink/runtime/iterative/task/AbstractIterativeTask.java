@@ -19,6 +19,7 @@
 package org.apache.flink.runtime.iterative.task;
 
 import org.apache.flink.api.common.ExecutionConfig;
+import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.TaskInfo;
 import org.apache.flink.api.common.accumulators.Accumulator;
 import org.apache.flink.api.common.aggregators.Aggregator;
@@ -192,7 +193,8 @@ public abstract class AbstractIterativeTask<S extends Function, OT> extends Batc
                 env.getDistributedCacheEntries(),
                 this.accumulatorMap,
                 metrics,
-                env.getExternalResourceInfoProvider());
+                env.getExternalResourceInfoProvider(),
+                env.getJobID());
     }
 
     // --------------------------------------------------------------------------------------------
@@ -399,7 +401,8 @@ public abstract class AbstractIterativeTask<S extends Function, OT> extends Batc
                 Map<String, Future<Path>> cpTasks,
                 Map<String, Accumulator<?, ?>> accumulatorMap,
                 MetricGroup metrics,
-                ExternalResourceInfoProvider externalResourceInfoProvider) {
+                ExternalResourceInfoProvider externalResourceInfoProvider,
+                JobID jobID) {
             super(
                     taskInfo,
                     userCodeClassLoader,
@@ -407,7 +410,8 @@ public abstract class AbstractIterativeTask<S extends Function, OT> extends Batc
                     cpTasks,
                     accumulatorMap,
                     metrics,
-                    externalResourceInfoProvider);
+                    externalResourceInfoProvider,
+                    jobID);
         }
 
         @Override
@@ -424,6 +428,11 @@ public abstract class AbstractIterativeTask<S extends Function, OT> extends Batc
         @SuppressWarnings("unchecked")
         public <T extends Value> T getPreviousIterationAggregate(String name) {
             return (T) getIterationAggregators().getPreviousGlobalAggregate(name);
+        }
+
+        @Override
+        public JobID getJobId() {
+            return runtimeUdfContext.getJobId();
         }
 
         @Override

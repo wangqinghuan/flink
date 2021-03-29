@@ -21,6 +21,7 @@ package org.apache.flink.formats.json;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.formats.common.TimestampFormat;
 import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.api.ValidationException;
 
@@ -72,6 +73,13 @@ public class JsonOptions {
                             "Optional flag to specify timestamp format, SQL by default."
                                     + " Option ISO-8601 will parse input timestamp in \"yyyy-MM-ddTHH:mm:ss.s{precision}\" format and output timestamp in the same format."
                                     + " Option SQL will parse input timestamp in \"yyyy-MM-dd HH:mm:ss.s{precision}\" format and output timestamp in the same format.");
+
+    public static final ConfigOption<Boolean> ENCODE_DECIMAL_AS_PLAIN_NUMBER =
+            ConfigOptions.key("encode.decimal-as-plain-number")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription(
+                            "Optional flag to specify whether to encode all decimals as plain numbers instead of possible scientific notations, false by default.");
 
     // --------------------------------------------------------------------------------------------
     // Option enumerations

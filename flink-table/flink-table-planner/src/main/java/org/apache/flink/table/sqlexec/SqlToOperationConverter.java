@@ -21,7 +21,7 @@ package org.apache.flink.table.sqlexec;
 import org.apache.flink.sql.parser.ddl.SqlAlterDatabase;
 import org.apache.flink.sql.parser.ddl.SqlAlterFunction;
 import org.apache.flink.sql.parser.ddl.SqlAlterTable;
-import org.apache.flink.sql.parser.ddl.SqlAlterTableProperties;
+import org.apache.flink.sql.parser.ddl.SqlAlterTableOptions;
 import org.apache.flink.sql.parser.ddl.SqlAlterTableRename;
 import org.apache.flink.sql.parser.ddl.SqlCreateDatabase;
 import org.apache.flink.sql.parser.ddl.SqlCreateFunction;
@@ -44,6 +44,7 @@ import org.apache.flink.sql.parser.dql.SqlShowDatabases;
 import org.apache.flink.sql.parser.dql.SqlShowFunctions;
 import org.apache.flink.sql.parser.dql.SqlShowTables;
 import org.apache.flink.sql.parser.dql.SqlShowViews;
+import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.api.TableSchema;
 import org.apache.flink.table.api.ValidationException;
@@ -58,9 +59,9 @@ import org.apache.flink.table.catalog.CatalogManager;
 import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.catalog.CatalogTableImpl;
 import org.apache.flink.table.catalog.CatalogView;
-import org.apache.flink.table.catalog.CatalogViewImpl;
 import org.apache.flink.table.catalog.FunctionLanguage;
 import org.apache.flink.table.catalog.ObjectIdentifier;
+import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.catalog.UnresolvedIdentifier;
 import org.apache.flink.table.catalog.exceptions.DatabaseNotExistException;
 import org.apache.flink.table.operations.CatalogSinkModifyOperation;
@@ -73,13 +74,14 @@ import org.apache.flink.table.operations.ShowCurrentCatalogOperation;
 import org.apache.flink.table.operations.ShowCurrentDatabaseOperation;
 import org.apache.flink.table.operations.ShowDatabasesOperation;
 import org.apache.flink.table.operations.ShowFunctionsOperation;
+import org.apache.flink.table.operations.ShowFunctionsOperation.FunctionScope;
 import org.apache.flink.table.operations.ShowTablesOperation;
 import org.apache.flink.table.operations.ShowViewsOperation;
 import org.apache.flink.table.operations.UseCatalogOperation;
 import org.apache.flink.table.operations.UseDatabaseOperation;
 import org.apache.flink.table.operations.ddl.AlterCatalogFunctionOperation;
 import org.apache.flink.table.operations.ddl.AlterDatabaseOperation;
-import org.apache.flink.table.operations.ddl.AlterTablePropertiesOperation;
+import org.apache.flink.table.operations.ddl.AlterTableOptionsOperation;
 import org.apache.flink.table.operations.ddl.AlterTableRenameOperation;
 import org.apache.flink.table.operations.ddl.CreateCatalogFunctionOperation;
 import org.apache.flink.table.operations.ddl.CreateDatabaseOperation;
@@ -91,7 +93,6 @@ import org.apache.flink.table.operations.ddl.DropDatabaseOperation;
 import org.apache.flink.table.operations.ddl.DropTableOperation;
 import org.apache.flink.table.operations.ddl.DropTempSystemFunctionOperation;
 import org.apache.flink.table.operations.ddl.DropViewOperation;
-import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.utils.TypeConversions;
 import org.apache.flink.util.StringUtils;
 
@@ -306,29 +307,24 @@ public class SqlToOperationConverter {
             ObjectIdentifier newTableIdentifier =
                     catalogManager.qualifyIdentifier(newUnresolvedIdentifier);
             return new AlterTableRenameOperation(tableIdentifier, newTableIdentifier);
-        } else if (sqlAlterTable instanceof SqlAlterTableProperties) {
+        } else if (sqlAlterTable instanceof SqlAlterTableOptions) {
             Optional<CatalogManager.TableLookupResult> optionalCatalogTable =
                     catalogManager.getTable(tableIdentifier);
             if (optionalCatalogTable.isPresent() && !optionalCatalogTable.get().isTemporary()) {
                 CatalogTable originalCatalogTable =
                         (CatalogTable) optionalCatalogTable.get().getTable();
-                Map<String, String> properties = new HashMap<>();
-                properties.putAll(originalCatalogTable.getProperties());
-                ((SqlAlterTableProperties) sqlAlterTable)
+                Map<String, String> options = new HashMap<>();
+                options.putAll(originalCatalogTable.getOptions());
+                ((SqlAlterTableOptions) sqlAlterTable)
                         .getPropertyList()
                         .getList()
                         .forEach(
                                 p ->
-                                        properties.put(
+                                        options.put(
                                                 ((SqlTableOption) p).getKeyString(),
                                                 ((SqlTableOption) p).getValueString()));
-                CatalogTable catalogTable =
-                        new CatalogTableImpl(
-                                originalCatalogTable.getSchema(),
-                                originalCatalogTable.getPartitionKeys(),
-                                properties,
-                                originalCatalogTable.getComment());
-                return new AlterTablePropertiesOperation(tableIdentifier, catalogTable);
+                return new AlterTableOptionsOperation(
+                        tableIdentifier, originalCatalogTable.copy(options));
             } else {
                 throw new ValidationException(
                         String.format(
@@ -579,7 +575,8 @@ public class SqlToOperationConverter {
 
     /** Convert SHOW FUNCTIONS statement. */
     private Operation convertShowFunctions(SqlShowFunctions sqlShowFunctions) {
-        return new ShowFunctionsOperation();
+        return new ShowFunctionsOperation(
+                sqlShowFunctions.requireUser() ? FunctionScope.USER : FunctionScope.ALL);
     }
 
     /** Convert CREATE VIEW statement. */
@@ -589,26 +586,26 @@ public class SqlToOperationConverter {
 
         SqlNode validateQuery = flinkPlanner.validate(query);
         PlannerQueryOperation operation = toQueryOperation(flinkPlanner, validateQuery);
-        TableSchema schema = operation.getTableSchema();
+        ResolvedSchema schema = operation.getResolvedSchema();
 
         // the view column list in CREATE VIEW is optional, if it's not empty, we should update
         // the column name with the names in view column list.
         if (!fieldList.getList().isEmpty()) {
             // alias column names
-            String[] inputFieldNames = schema.getFieldNames();
-            String[] aliasFieldNames =
-                    fieldList.getList().stream().map(SqlNode::toString).toArray(String[]::new);
+            List<String> inputFieldNames = schema.getColumnNames();
+            List<String> aliasFieldNames =
+                    fieldList.getList().stream()
+                            .map(SqlNode::toString)
+                            .collect(Collectors.toList());
 
-            if (inputFieldNames.length != aliasFieldNames.length) {
+            if (inputFieldNames.size() != aliasFieldNames.size()) {
                 throw new ValidationException(
                         String.format(
                                 "VIEW definition and input fields not match:\n\tDef fields: %s.\n\tInput fields: %s.",
-                                Arrays.toString(aliasFieldNames),
-                                Arrays.toString(inputFieldNames)));
+                                aliasFieldNames, inputFieldNames));
             }
 
-            DataType[] inputFieldTypes = schema.getFieldDataTypes();
-            schema = TableSchema.builder().fields(aliasFieldNames, inputFieldTypes).build();
+            schema = ResolvedSchema.physical(aliasFieldNames, schema.getColumnDataTypes());
         }
 
         String originalQuery = getQuotedSqlString(query);
@@ -616,8 +613,12 @@ public class SqlToOperationConverter {
         String comment =
                 sqlCreateView.getComment().map(c -> c.getNlsString().getValue()).orElse(null);
         CatalogView catalogView =
-                new CatalogViewImpl(
-                        originalQuery, expandedQuery, schema, Collections.emptyMap(), comment);
+                CatalogView.of(
+                        Schema.newBuilder().fromResolvedSchema(schema).build(),
+                        comment,
+                        originalQuery,
+                        expandedQuery,
+                        Collections.emptyMap());
 
         UnresolvedIdentifier unresolvedIdentifier =
                 UnresolvedIdentifier.of(sqlCreateView.fullViewName());

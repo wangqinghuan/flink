@@ -31,6 +31,8 @@ import org.apache.flink.runtime.execution.ExecutionState;
 import org.apache.flink.runtime.executiongraph.failover.flip1.TestRestartBackoffTimeStrategy;
 import org.apache.flink.runtime.executiongraph.utils.SimpleAckingTaskManagerGateway;
 import org.apache.flink.runtime.jobgraph.JobGraph;
+import org.apache.flink.runtime.jobgraph.JobGraphBuilder;
+import org.apache.flink.runtime.jobgraph.JobGraphTestUtils;
 import org.apache.flink.runtime.jobgraph.JobVertex;
 import org.apache.flink.runtime.jobmanager.slots.TaskManagerGateway;
 import org.apache.flink.runtime.jobmaster.JobMasterId;
@@ -105,7 +107,7 @@ public class ExecutionGraphRestartTest extends TestLogger {
         try (SlotPool slotPool = createSlotPoolImpl()) {
             TaskManagerLocation taskManagerLocation = new LocalTaskManagerLocation();
             SchedulerBase scheduler =
-                    SchedulerTestingUtils.newSchedulerBuilder(createJobGraph())
+                    SchedulerTestingUtils.newSchedulerBuilder(createJobGraph(), mainThreadExecutor)
                             .setExecutionSlotAllocatorFactory(
                                     createExecutionSlotAllocatorFactory(
                                             slotPool, taskManagerLocation))
@@ -140,7 +142,7 @@ public class ExecutionGraphRestartTest extends TestLogger {
     public void testCancelWhileFailing() throws Exception {
         try (SlotPool slotPool = createSlotPoolImpl()) {
             SchedulerBase scheduler =
-                    SchedulerTestingUtils.newSchedulerBuilder(createJobGraph())
+                    SchedulerTestingUtils.newSchedulerBuilder(createJobGraph(), mainThreadExecutor)
                             .setExecutionSlotAllocatorFactory(
                                     createExecutionSlotAllocatorFactory(slotPool))
                             .setRestartBackoffTimeStrategy(
@@ -173,7 +175,7 @@ public class ExecutionGraphRestartTest extends TestLogger {
     public void testFailWhileCanceling() throws Exception {
         try (SlotPool slotPool = createSlotPoolImpl()) {
             SchedulerBase scheduler =
-                    SchedulerTestingUtils.newSchedulerBuilder(createJobGraph())
+                    SchedulerTestingUtils.newSchedulerBuilder(createJobGraph(), mainThreadExecutor)
                             .setExecutionSlotAllocatorFactory(
                                     createExecutionSlotAllocatorFactory(slotPool))
                             .setRestartBackoffTimeStrategy(
@@ -215,11 +217,11 @@ public class ExecutionGraphRestartTest extends TestLogger {
         JobVertex sender = ExecutionGraphTestUtils.createJobVertex("Task1", 1, NoOpInvokable.class);
         JobVertex receiver =
                 ExecutionGraphTestUtils.createJobVertex("Task2", 1, NoOpInvokable.class);
-        JobGraph jobGraph = new JobGraph("Pointwise job", sender, receiver);
+        JobGraph jobGraph = JobGraphTestUtils.streamingJobGraph(sender, receiver);
 
         try (SlotPool slotPool = createSlotPoolImpl()) {
             SchedulerBase scheduler =
-                    SchedulerTestingUtils.newSchedulerBuilder(jobGraph)
+                    SchedulerTestingUtils.newSchedulerBuilder(jobGraph, mainThreadExecutor)
                             .setExecutionSlotAllocatorFactory(
                                     createExecutionSlotAllocatorFactory(
                                             slotPool, new LocalTaskManagerLocation(), 2))
@@ -276,7 +278,8 @@ public class ExecutionGraphRestartTest extends TestLogger {
     public void testFailExecutionAfterCancel() throws Exception {
         try (SlotPool slotPool = createSlotPoolImpl()) {
             SchedulerBase scheduler =
-                    SchedulerTestingUtils.newSchedulerBuilder(createJobGraphToCancel())
+                    SchedulerTestingUtils.newSchedulerBuilder(
+                                    createJobGraphToCancel(), mainThreadExecutor)
                             .setExecutionSlotAllocatorFactory(
                                     createExecutionSlotAllocatorFactory(
                                             slotPool, new LocalTaskManagerLocation(), 2))
@@ -310,7 +313,6 @@ public class ExecutionGraphRestartTest extends TestLogger {
     // ------------------------------------------------------------------------
 
     private static void startScheduling(SchedulerBase scheduler) throws Exception {
-        scheduler.initialize(mainThreadExecutor);
         assertThat(scheduler.getExecutionGraph().getState(), is(JobStatus.CREATED));
         scheduler.startScheduling();
         assertThat(scheduler.getExecutionGraph().getState(), is(JobStatus.RUNNING));
@@ -359,7 +361,7 @@ public class ExecutionGraphRestartTest extends TestLogger {
     private static JobGraph createJobGraph() {
         JobVertex sender =
                 ExecutionGraphTestUtils.createJobVertex("Task", NUM_TASKS, NoOpInvokable.class);
-        return new JobGraph("Pointwise job", sender);
+        return JobGraphTestUtils.streamingJobGraph(sender);
     }
 
     private static JobGraph createJobGraphToCancel() throws IOException {
@@ -368,8 +370,10 @@ public class ExecutionGraphRestartTest extends TestLogger {
         ExecutionConfig executionConfig = new ExecutionConfig();
         executionConfig.setRestartStrategy(
                 RestartStrategies.fixedDelayRestart(Integer.MAX_VALUE, Integer.MAX_VALUE));
-        JobGraph jobGraph = new JobGraph("Test Job", vertex);
-        jobGraph.setExecutionConfig(executionConfig);
-        return jobGraph;
+
+        return JobGraphBuilder.newStreamingJobGraphBuilder()
+                .addJobVertex(vertex)
+                .setExecutionConfig(executionConfig)
+                .build();
     }
 }

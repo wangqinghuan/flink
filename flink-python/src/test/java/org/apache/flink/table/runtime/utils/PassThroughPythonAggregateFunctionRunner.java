@@ -86,7 +86,8 @@ public class PassThroughPythonAggregateFunctionRunner
                 jobOptions,
                 flinkMetricContainer,
                 null,
-                0.0);
+                0.0,
+                FlinkFnApi.CoderParam.OutputMode.SINGLE);
         this.buffer = new LinkedList<>();
         this.isBatchOverWindow = isBatchOverWindow;
         arrowSerializer = new RowDataArrowSerializer(inputType, outputType);
@@ -127,13 +128,16 @@ public class PassThroughPythonAggregateFunctionRunner
                             RowData firstData = arrowSerializer.read(lowerBoundary);
                             arrowSerializer.write(firstData);
                         }
+                        arrowSerializer.resetReader();
                     } else {
                         arrowSerializer.load();
                         arrowSerializer.write(arrowSerializer.read(0));
+                        arrowSerializer.resetReader();
                     }
                     arrowSerializer.finishCurrentBatch();
                     buffer.add(baos.toByteArray());
                     baos.reset();
+                    arrowSerializer.resetWriter();
                 };
     }
 

@@ -210,6 +210,7 @@ public class ConfigurationUtils {
             }
         }
 
+        checkConfigContains(configs, TaskManagerOptions.CPU_CORES.key());
         checkConfigContains(configs, TaskManagerOptions.FRAMEWORK_HEAP_MEMORY.key());
         checkConfigContains(configs, TaskManagerOptions.FRAMEWORK_OFF_HEAP_MEMORY.key());
         checkConfigContains(configs, TaskManagerOptions.TASK_HEAP_MEMORY.key());
@@ -217,6 +218,10 @@ public class ConfigurationUtils {
         checkConfigContains(configs, TaskManagerOptions.NETWORK_MEMORY_MAX.key());
         checkConfigContains(configs, TaskManagerOptions.NETWORK_MEMORY_MIN.key());
         checkConfigContains(configs, TaskManagerOptions.MANAGED_MEMORY_SIZE.key());
+        checkConfigContains(configs, TaskManagerOptions.JVM_METASPACE.key());
+        checkConfigContains(configs, TaskManagerOptions.JVM_OVERHEAD_MIN.key());
+        checkConfigContains(configs, TaskManagerOptions.JVM_OVERHEAD_MAX.key());
+        checkConfigContains(configs, TaskManagerOptions.NUM_TASK_SLOTS.key());
 
         return configs;
     }

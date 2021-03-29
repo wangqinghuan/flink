@@ -91,7 +91,7 @@ final class ResolveCallByArgumentsRule implements ResolverRule {
     private static class ResolvingCallVisitor
             extends RuleExpressionVisitor<List<ResolvedExpression>> {
 
-        private @Nullable SurroundingInfo surroundingInfo;
+        private final @Nullable SurroundingInfo surroundingInfo;
 
         ResolvingCallVisitor(ResolutionContext context, @Nullable SurroundingInfo surroundingInfo) {
             super(context);

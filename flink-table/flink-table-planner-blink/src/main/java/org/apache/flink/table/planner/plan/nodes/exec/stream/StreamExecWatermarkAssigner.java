@@ -28,46 +28,79 @@ import org.apache.flink.table.planner.delegation.PlannerBase;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecEdge;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNode;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeBase;
+import org.apache.flink.table.planner.plan.nodes.exec.InputProperty;
+import org.apache.flink.table.planner.plan.nodes.exec.SingleTransformationTranslator;
 import org.apache.flink.table.planner.utils.JavaScalaConversionUtil;
 import org.apache.flink.table.runtime.generated.GeneratedWatermarkGenerator;
 import org.apache.flink.table.runtime.operators.wmassigners.WatermarkAssignerOperatorFactory;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.table.types.logical.RowType;
 
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonCreator;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonProperty;
+
 import org.apache.calcite.rex.RexNode;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
+
+import static org.apache.flink.util.Preconditions.checkArgument;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /** Stream {@link ExecNode} which generates watermark based on the input elements. */
 public class StreamExecWatermarkAssigner extends ExecNodeBase<RowData>
-        implements StreamExecNode<RowData> {
+        implements StreamExecNode<RowData>, SingleTransformationTranslator<RowData> {
+    public static final String FIELD_NAME_WATERMARK_EXPR = "watermarkExpr";
+    public static final String FIELD_NAME_ROWTIME_FIELD_INDEX = "rowtimeFieldIndex";
+
+    @JsonProperty(FIELD_NAME_WATERMARK_EXPR)
     private final RexNode watermarkExpr;
+
+    @JsonProperty(FIELD_NAME_ROWTIME_FIELD_INDEX)
     private final int rowtimeFieldIndex;
 
     public StreamExecWatermarkAssigner(
             RexNode watermarkExpr,
             int rowtimeFieldIndex,
-            ExecEdge inputEdge,
+            InputProperty inputProperty,
             RowType outputType,
             String description) {
-        super(Collections.singletonList(inputEdge), outputType, description);
-        this.watermarkExpr = watermarkExpr;
+        this(
+                watermarkExpr,
+                rowtimeFieldIndex,
+                getNewNodeId(),
+                Collections.singletonList(inputProperty),
+                outputType,
+                description);
+    }
+
+    @JsonCreator
+    public StreamExecWatermarkAssigner(
+            @JsonProperty(FIELD_NAME_WATERMARK_EXPR) RexNode watermarkExpr,
+            @JsonProperty(FIELD_NAME_ROWTIME_FIELD_INDEX) int rowtimeFieldIndex,
+            @JsonProperty(FIELD_NAME_ID) int id,
+            @JsonProperty(FIELD_NAME_INPUT_PROPERTIES) List<InputProperty> inputProperties,
+            @JsonProperty(FIELD_NAME_OUTPUT_TYPE) RowType outputType,
+            @JsonProperty(FIELD_NAME_DESCRIPTION) String description) {
+        super(id, inputProperties, outputType, description);
+        checkArgument(inputProperties.size() == 1);
+        this.watermarkExpr = checkNotNull(watermarkExpr);
         this.rowtimeFieldIndex = rowtimeFieldIndex;
     }
 
     @SuppressWarnings("unchecked")
     @Override
     protected Transformation<RowData> translateToPlanInternal(PlannerBase planner) {
-        final ExecNode<RowData> inputNode = (ExecNode<RowData>) getInputNodes().get(0);
-        final Transformation<RowData> inputTransform = inputNode.translateToPlan(planner);
+        final ExecEdge inputEdge = getInputEdges().get(0);
+        final Transformation<RowData> inputTransform =
+                (Transformation<RowData>) inputEdge.translateToPlan(planner);
 
         final TableConfig tableConfig = planner.getTableConfig();
-
         final GeneratedWatermarkGenerator watermarkGenerator =
                 WatermarkGeneratorCodeGenerator.generateWatermarkGenerator(
                         tableConfig,
-                        (RowType) inputNode.getOutputType(),
+                        (RowType) inputEdge.getOutputType(),
                         watermarkExpr,
                         JavaScalaConversionUtil.toScala(Optional.empty()));
 
@@ -83,7 +116,7 @@ public class StreamExecWatermarkAssigner extends ExecNodeBase<RowData>
 
         return new OneInputTransformation<>(
                 inputTransform,
-                getDesc(),
+                getDescription(),
                 operatorFactory,
                 InternalTypeInfo.of(getOutputType()),
                 inputTransform.getParallelism());

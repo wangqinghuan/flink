@@ -100,6 +100,9 @@ public class FlinkHiveSqlParserImplTest extends SqlParserTest {
     public void testDescribeDatabase() {
         sql("describe schema db1").ok("DESCRIBE DATABASE `DB1`");
         sql("describe database extended db1").ok("DESCRIBE DATABASE EXTENDED `DB1`");
+
+        sql("desc schema db1").ok("DESCRIBE DATABASE `DB1`");
+        sql("desc database extended db1").ok("DESCRIBE DATABASE EXTENDED `DB1`");
     }
 
     @Test
@@ -114,6 +117,10 @@ public class FlinkHiveSqlParserImplTest extends SqlParserTest {
         sql("describe tbl").ok("DESCRIBE `TBL`");
         sql("describe extended tbl").ok("DESCRIBE EXTENDED `TBL`");
         sql("describe formatted tbl").ok("DESCRIBE FORMATTED `TBL`");
+
+        sql("desc tbl").ok("DESCRIBE `TBL`");
+        sql("desc extended tbl").ok("DESCRIBE EXTENDED `TBL`");
+        sql("desc formatted tbl").ok("DESCRIBE FORMATTED `TBL`");
     }
 
     @Test
@@ -250,8 +257,8 @@ public class FlinkHiveSqlParserImplTest extends SqlParserTest {
 
     @Test
     public void testShowFunctions() {
-        // TODO: support SHOW FUNCTIONS LIKE 'regex_pattern'
         sql("show functions").ok("SHOW FUNCTIONS");
+        sql("show user functions").ok("SHOW USER FUNCTIONS");
     }
 
     @Test
@@ -279,6 +286,8 @@ public class FlinkHiveSqlParserImplTest extends SqlParserTest {
     @Test
     public void testDescribeCatalog() {
         sql("describe catalog cat").ok("DESCRIBE CATALOG `CAT`");
+
+        sql("desc catalog cat").ok("DESCRIBE CATALOG `CAT`");
     }
 
     @Test
@@ -440,5 +449,37 @@ public class FlinkHiveSqlParserImplTest extends SqlParserTest {
     public void testShowPartitions() {
         sql("show partitions tbl").ok("SHOW PARTITIONS `TBL`");
         sql("show partitions tbl partition (p=1)").ok("SHOW PARTITIONS `TBL` PARTITION (`P` = 1)");
+    }
+
+    @Test
+    public void testLoadModule() {
+        sql("load module hive").ok("LOAD MODULE `HIVE`");
+
+        sql("load module hive with ('hive-version' = '3.1.2')")
+                .ok("LOAD MODULE `HIVE` WITH (\n  'hive-version' = '3.1.2'\n)");
+    }
+
+    @Test
+    public void testUnloadModule() {
+        sql("unload module hive").ok("UNLOAD MODULE `HIVE`");
+    }
+
+    @Test
+    public void testUseModules() {
+        sql("use modules hive").ok("USE MODULES `HIVE`");
+
+        sql("use modules x, y, z").ok("USE MODULES `X`, `Y`, `Z`");
+
+        sql("use modules x^,^").fails("(?s).*Encountered \"<EOF>\" at line 1, column 14.\n.*");
+
+        sql("use modules ^'hive'^")
+                .fails("(?s).*Encountered \"\\\\'hive\\\\'\" at line 1, column 13.\n.*");
+    }
+
+    @Test
+    public void testShowModules() {
+        sql("show modules").ok("SHOW MODULES");
+
+        sql("show full modules").ok("SHOW FULL MODULES");
     }
 }

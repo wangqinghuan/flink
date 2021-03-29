@@ -75,7 +75,10 @@ public class ArrowPythonScalarFunctionOperator extends AbstractRowPythonScalarFu
     @Override
     public void dispose() throws Exception {
         super.dispose();
-        arrowSerializer.close();
+        if (arrowSerializer != null) {
+            arrowSerializer.close();
+            arrowSerializer = null;
+        }
     }
 
     @Override
@@ -102,6 +105,7 @@ public class ArrowPythonScalarFunctionOperator extends AbstractRowPythonScalarFu
             cRowWrapper.setChange(input.change());
             cRowWrapper.collect(Row.join(input.row(), arrowSerializer.read(i)));
         }
+        arrowSerializer.resetReader();
     }
 
     @Override
@@ -125,6 +129,7 @@ public class ArrowPythonScalarFunctionOperator extends AbstractRowPythonScalarFu
             pythonFunctionRunner.process(baos.toByteArray());
             checkInvokeFinishBundleByCount();
             baos.reset();
+            arrowSerializer.resetWriter();
         }
     }
 }

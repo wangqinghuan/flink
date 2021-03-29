@@ -556,22 +556,22 @@ public class FlinkSqlOperatorTable extends ReflectiveSqlOperatorTable {
                     SqlFunctionCategory.STRING);
 
     public static final SqlFunction NOW =
-            new SqlFunction(
-                    "NOW",
-                    SqlKind.OTHER_FUNCTION,
-                    ReturnTypes.explicit(SqlTypeName.TIMESTAMP, 0),
-                    null,
-                    OperandTypes.NILADIC,
-                    SqlFunctionCategory.TIMEDATE) {
-
+            new SqlCurrentTimestampFunction("NOW") {
                 @Override
-                public boolean isDeterministic() {
-                    return false;
+                public SqlSyntax getSyntax() {
+                    return SqlSyntax.FUNCTION;
                 }
+            };
+
+    public static final SqlFunction CURRENT_TIMESTAMP =
+            new SqlCurrentTimestampFunction("CURRENT_TIMESTAMP");
+
+    public static final SqlFunction CURRENT_ROW_TIMESTAMP =
+            new SqlCurrentTimestampFunction("CURRENT_ROW_TIMESTAMP") {
 
                 @Override
-                public SqlMonotonicity getMonotonicity(SqlOperatorBinding call) {
-                    return SqlMonotonicity.INCREASING;
+                public SqlSyntax getSyntax() {
+                    return SqlSyntax.FUNCTION;
                 }
             };
 
@@ -739,10 +739,9 @@ public class FlinkSqlOperatorTable extends ReflectiveSqlOperatorTable {
                     OperandTypes.family(SqlTypeFamily.STRING, SqlTypeFamily.INTEGER),
                     SqlFunctionCategory.STRING);
 
-    // TODO: the return type of TO_TIMESTAMP should be TIMESTAMP(9)
-    //  but conversion of DataType and TypeInformation only support TIMESTAMP(3) now.
-    //  change to TIMESTAMP(9) when FLINK-14645 is fixed.
-    //  https://issues.apache.org/jira/browse/FLINK-14925
+    // TODO: the return type of TO_TIMESTAMP should be TIMESTAMP(9),
+    //  but we keep TIMESTAMP(3) now because we did not support TIMESTAMP(9) as time attribute.
+    //  See: https://issues.apache.org/jira/browse/FLINK-14925
     public static final SqlFunction TO_TIMESTAMP =
             new SqlFunction(
                     "TO_TIMESTAMP",
@@ -754,6 +753,17 @@ public class FlinkSqlOperatorTable extends ReflectiveSqlOperatorTable {
                     OperandTypes.or(
                             OperandTypes.family(SqlTypeFamily.CHARACTER),
                             OperandTypes.family(SqlTypeFamily.CHARACTER, SqlTypeFamily.CHARACTER)),
+                    SqlFunctionCategory.TIMEDATE);
+
+    public static final SqlFunction TO_TIMESTAMP_LTZ =
+            new SqlFunction(
+                    "TO_TIMESTAMP_LTZ",
+                    SqlKind.OTHER_FUNCTION,
+                    ReturnTypes.cascade(
+                            ReturnTypes.explicit(SqlTypeName.TIMESTAMP_WITH_LOCAL_TIME_ZONE, 3),
+                            SqlTypeTransforms.FORCE_NULLABLE),
+                    null,
+                    OperandTypes.family(SqlTypeFamily.NUMERIC, SqlTypeFamily.INTEGER),
                     SqlFunctionCategory.TIMEDATE);
 
     public static final SqlFunction TO_DATE =
@@ -1089,7 +1099,6 @@ public class FlinkSqlOperatorTable extends ReflectiveSqlOperatorTable {
     public static final SqlFunction LOCALTIME = SqlStdOperatorTable.LOCALTIME;
     public static final SqlFunction LOCALTIMESTAMP = SqlStdOperatorTable.LOCALTIMESTAMP;
     public static final SqlFunction CURRENT_TIME = SqlStdOperatorTable.CURRENT_TIME;
-    public static final SqlFunction CURRENT_TIMESTAMP = SqlStdOperatorTable.CURRENT_TIMESTAMP;
     public static final SqlFunction CURRENT_DATE = SqlStdOperatorTable.CURRENT_DATE;
     public static final SqlFunction CAST = SqlStdOperatorTable.CAST;
     public static final SqlOperator SCALAR_QUERY = SqlStdOperatorTable.SCALAR_QUERY;
@@ -1155,8 +1164,11 @@ public class FlinkSqlOperatorTable extends ReflectiveSqlOperatorTable {
             SqlStdOperatorTable.IS_NOT_JSON_SCALAR;
 
     // WINDOW TABLE FUNCTIONS
-    public static final SqlOperator DESCRIPTOR = SqlStdOperatorTable.DESCRIPTOR;
-    public static final SqlFunction TUMBLE = SqlStdOperatorTable.TUMBLE;
-    public static final SqlFunction HOP = SqlStdOperatorTable.HOP;
-    public static final SqlFunction SESSION = SqlStdOperatorTable.SESSION;
+    // use the definitions in Flink, because we have different return types
+    // and special check on the time attribute.
+    // SESSION is not supported yet, because Calcite doesn't support PARTITION BY clause in TVF
+    public static final SqlOperator DESCRIPTOR = new SqlDescriptorOperator();
+    public static final SqlFunction TUMBLE = new SqlTumbleTableFunction();
+    public static final SqlFunction HOP = new SqlHopTableFunction();
+    public static final SqlFunction CUMULATE = new SqlCumulateTableFunction();
 }

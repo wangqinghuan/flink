@@ -22,12 +22,12 @@ import org.apache.flink.table.api.{TableConfig, TableException}
 import org.apache.flink.table.data.RowData
 import org.apache.flink.table.expressions.ExpressionUtils.extractValue
 import org.apache.flink.table.expressions._
-import org.apache.flink.table.functions.{AggregateFunction, FunctionKind, ImperativeAggregateFunction, UserDefinedFunction}
+import org.apache.flink.table.functions._
 import org.apache.flink.table.planner.JLong
-import org.apache.flink.table.planner.calcite.FlinkRelBuilder.PlannerNamedWindowProperty
 import org.apache.flink.table.planner.calcite.{FlinkTypeFactory, FlinkTypeSystem}
-import org.apache.flink.table.planner.expressions.{PlannerProctimeAttribute, PlannerRowtimeAttribute, PlannerWindowEnd, PlannerWindowStart}
-import org.apache.flink.table.planner.functions.aggfunctions.{DeclarativeAggregateFunction, InternalAggregateFunction}
+import org.apache.flink.table.planner.delegation.PlannerBase
+import org.apache.flink.table.planner.expressions.{PlannerNamedWindowProperty, PlannerProctimeAttribute, PlannerRowtimeAttribute, PlannerWindowEnd, PlannerWindowStart}
+import org.apache.flink.table.planner.functions.aggfunctions.DeclarativeAggregateFunction
 import org.apache.flink.table.planner.functions.bridging.BridgingSqlAggFunction
 import org.apache.flink.table.planner.functions.inference.OperatorBindingCallContext
 import org.apache.flink.table.planner.functions.sql.{FlinkSqlOperatorTable, SqlFirstLastValueAggFunction, SqlListAggFunction}
@@ -40,6 +40,7 @@ import org.apache.flink.table.planner.typeutils.DataViewUtils
 import org.apache.flink.table.planner.typeutils.DataViewUtils.DataViewSpec
 import org.apache.flink.table.planner.typeutils.LegacyDataViewUtils.useNullSerializerForStateViewFieldsFromAccType
 import org.apache.flink.table.planner.utils.JavaScalaConversionUtil.toScala
+import org.apache.flink.table.runtime.functions.aggregate.BuiltInAggregateFunction
 import org.apache.flink.table.runtime.operators.bundle.trigger.CountBundleTrigger
 import org.apache.flink.table.runtime.types.LogicalTypeDataTypeConverter.fromDataTypeToLogicalType
 import org.apache.flink.table.types.DataType
@@ -384,7 +385,6 @@ object AggregateUtil extends Enumeration {
         call,
         index,
         argIndexes,
-        udf.asInstanceOf[ImperativeAggregateFunction[_, _]],
         hasStateBackedDataViews,
         needsRetraction)
 
@@ -413,22 +413,19 @@ object AggregateUtil extends Enumeration {
       call: AggregateCall,
       index: Int,
       argIndexes: Array[Int],
-      udf: ImperativeAggregateFunction[_, _],
       hasStateBackedDataViews: Boolean,
       needsRetraction: Boolean)
     : AggregateInfo = {
 
     val function = call.getAggregation.asInstanceOf[BridgingSqlAggFunction]
-
+    val definition = function.getDefinition
     val dataTypeFactory = function.getDataTypeFactory
-
-    val inference = function.getTypeInference
 
     // not all information is available in the call context of aggregate functions at this location
     // e.g. literal information is lost because the aggregation is split into multiple operators
     val callContext = new OperatorBindingCallContext(
       dataTypeFactory,
-      udf,
+      definition,
       new AggCallBinding(
         function.getTypeFactory,
         function,
@@ -436,7 +433,17 @@ object AggregateUtil extends Enumeration {
           FlinkTypeFactory.INSTANCE.buildRelNodeRowType(inputRowType),
           argIndexes.map(Int.box).toList),
         0,
-        false))
+        false),
+      call.getType)
+
+    // create the final UDF for runtime
+    val udf = UserDefinedFunctionHelper.createSpecializedFunction(
+      function.getName,
+      definition,
+      callContext,
+      classOf[PlannerBase].getClassLoader,
+      null) // currently, aggregate functions have no access to configuration
+    val inference = udf.getTypeInference(dataTypeFactory)
 
     // enrich argument types with conversion class
     val adaptedCallContext = TypeInferenceUtil.adaptArguments(
@@ -457,7 +464,7 @@ object AggregateUtil extends Enumeration {
 
     createImperativeAggregateInfo(
       call,
-      udf,
+      udf.asInstanceOf[ImperativeAggregateFunction[_, _]],
       index,
       argIndexes,
       enrichedArgumentDataTypes.toArray,
@@ -476,13 +483,13 @@ object AggregateUtil extends Enumeration {
       hasStateBackedDataViews: Boolean)
     : AggregateInfo = udf match {
 
-    case imperativeFunction: InternalAggregateFunction[_, _] =>
+    case imperativeFunction: BuiltInAggregateFunction[_, _] =>
       createImperativeAggregateInfo(
         call,
         imperativeFunction,
         index,
         argIndexes,
-        imperativeFunction.getInputDataTypes,
+        imperativeFunction.getArgumentDataTypes.asScala.toArray,
         imperativeFunction.getAccumulatorDataType,
         imperativeFunction.getOutputDataType,
         needsRetraction,
@@ -965,23 +972,23 @@ object AggregateUtil extends Enumeration {
     val propPos = properties.foldRight(
       (None: Option[Int], None: Option[Int], None: Option[Int], 0)) {
       case (p, (s, e, rt, i)) => p match {
-        case PlannerNamedWindowProperty(_, prop) =>
-          prop match {
-            case PlannerWindowStart(_) if s.isDefined =>
+        case p: PlannerNamedWindowProperty =>
+          p.getProperty match {
+            case _: PlannerWindowStart if s.isDefined =>
               throw new TableException(
                 "Duplicate window start property encountered. This is a bug.")
-            case PlannerWindowStart(_) =>
+            case _: PlannerWindowStart =>
               (Some(i), e, rt, i - 1)
-            case PlannerWindowEnd(_) if e.isDefined =>
+            case _: PlannerWindowEnd if e.isDefined =>
               throw new TableException("Duplicate window end property encountered. This is a bug.")
-            case PlannerWindowEnd(_) =>
+            case _: PlannerWindowEnd =>
               (s, Some(i), rt, i - 1)
-            case PlannerRowtimeAttribute(_) if rt.isDefined =>
+            case _: PlannerRowtimeAttribute if rt.isDefined =>
               throw new TableException(
                 "Duplicate window rowtime property encountered. This is a bug.")
-            case PlannerRowtimeAttribute(_) =>
+            case _: PlannerRowtimeAttribute =>
               (s, e, Some(i), i - 1)
-            case PlannerProctimeAttribute(_) =>
+            case _: PlannerProctimeAttribute =>
               // ignore this property, it will be null at the position later
               (s, e, rt, i - 1)
           }
@@ -1012,7 +1019,7 @@ object AggregateUtil extends Enumeration {
   def toDuration(literalExpr: ValueLiteralExpression): Duration =
     extractValue(literalExpr, classOf[Duration]).get()
 
-  private[flink] def isTableAggregate(aggCalls: util.List[AggregateCall]): Boolean = {
+  def isTableAggregate(aggCalls: util.List[AggregateCall]): Boolean = {
     aggCalls
       .flatMap(call => call.getAggregation match {
         case asf: AggSqlFunction => Some(asf.aggregateFunction)

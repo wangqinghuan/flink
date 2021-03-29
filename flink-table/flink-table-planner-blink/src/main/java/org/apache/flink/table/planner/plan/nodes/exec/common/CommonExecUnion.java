@@ -25,6 +25,8 @@ import org.apache.flink.table.planner.delegation.PlannerBase;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecEdge;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNode;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeBase;
+import org.apache.flink.table.planner.plan.nodes.exec.InputProperty;
+import org.apache.flink.table.planner.plan.nodes.exec.SingleTransformationTranslator;
 import org.apache.flink.table.types.logical.RowType;
 
 import java.util.ArrayList;
@@ -34,18 +36,20 @@ import java.util.List;
  * Base {@link ExecNode} that is not a physical node and just union the inputs' records into one
  * node.
  */
-public abstract class CommonExecUnion extends ExecNodeBase<RowData> {
+public abstract class CommonExecUnion extends ExecNodeBase<RowData>
+        implements SingleTransformationTranslator<RowData> {
 
-    public CommonExecUnion(List<ExecEdge> inputEdges, RowType outputType, String description) {
-        super(inputEdges, outputType, description);
+    public CommonExecUnion(
+            int id, List<InputProperty> inputProperties, RowType outputType, String description) {
+        super(id, inputProperties, outputType, description);
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
     @Override
     protected Transformation<RowData> translateToPlanInternal(PlannerBase planner) {
         final List<Transformation<RowData>> inputTransforms = new ArrayList<>();
-        for (ExecNode<?> input : getInputNodes()) {
-            inputTransforms.add((Transformation<RowData>) input.translateToPlan(planner));
+        for (ExecEdge inputEdge : getInputEdges()) {
+            inputTransforms.add((Transformation<RowData>) inputEdge.translateToPlan(planner));
         }
         return new UnionTransformation(inputTransforms);
     }

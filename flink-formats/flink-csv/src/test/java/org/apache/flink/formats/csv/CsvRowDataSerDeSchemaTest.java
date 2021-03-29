@@ -18,7 +18,7 @@
 
 package org.apache.flink.formats.csv;
 
-import org.apache.flink.api.java.typeutils.TypeExtractor;
+import org.apache.flink.api.common.typeutils.base.VoidSerializer;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.util.DataFormatConverters;
@@ -34,7 +34,8 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Time;
-import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.function.Consumer;
 
@@ -54,8 +55,11 @@ import static org.apache.flink.table.api.DataTypes.SMALLINT;
 import static org.apache.flink.table.api.DataTypes.STRING;
 import static org.apache.flink.table.api.DataTypes.TIME;
 import static org.apache.flink.table.api.DataTypes.TIMESTAMP;
+import static org.apache.flink.table.api.DataTypes.TIMESTAMP_LTZ;
 import static org.apache.flink.table.api.DataTypes.TINYINT;
 import static org.apache.flink.table.data.StringData.fromString;
+import static org.apache.flink.table.data.TimestampData.fromInstant;
+import static org.apache.flink.table.data.TimestampData.fromLocalDateTime;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
@@ -89,7 +93,16 @@ public class CsvRowDataSerDeSchemaTest {
         testNullableField(DATE(), "2018-10-12", Date.valueOf("2018-10-12"));
         testNullableField(TIME(0), "12:12:12", Time.valueOf("12:12:12"));
         testNullableField(
-                TIMESTAMP(0), "\"2018-10-12 12:12:12\"", Timestamp.valueOf("2018-10-12 12:12:12"));
+                TIMESTAMP(0),
+                "\"2018-10-12 12:12:12\"",
+                LocalDateTime.parse("2018-10-12T12:12:12"));
+        testNullableField(
+                TIMESTAMP(0),
+                "\"2018-10-12 12:12:12.123\"",
+                LocalDateTime.parse("2018-10-12T12:12:12.123"));
+        testNullableField(TIMESTAMP_LTZ(0), "\"1970-01-01 00:02:03Z\"", Instant.ofEpochSecond(123));
+        testNullableField(
+                TIMESTAMP_LTZ(0), "\"1970-01-01 00:02:03.456Z\"", Instant.ofEpochMilli(123456));
         testNullableField(
                 ROW(FIELD("f0", STRING()), FIELD("f1", INT()), FIELD("f2", BOOLEAN())),
                 "Hello;42;false",
@@ -180,7 +193,7 @@ public class CsvRowDataSerDeSchemaTest {
         int precision = 5;
         try {
             testFieldDeserialization(
-                    TIME(5), "12:12:12.45", LocalTime.parse("12:12:12"), deserConfig, ";");
+                    TIME(precision), "12:12:12.45", LocalTime.parse("12:12:12"), deserConfig, ";");
             fail();
         } catch (Exception e) {
             assertEquals(
@@ -204,6 +217,12 @@ public class CsvRowDataSerDeSchemaTest {
         // unsupported null for integer
         assertEquals(
                 Row.of("Test", null, "Test"), testDeserialization(true, false, "Test,null,Test"));
+    }
+
+    @Test
+    public void testDeserializeNullRow() throws Exception {
+        // return null for null input
+        assertNull(testDeserialization(false, false, null));
     }
 
     @Test
@@ -263,16 +282,25 @@ public class CsvRowDataSerDeSchemaTest {
 
     @Test(expected = IllegalArgumentException.class)
     public void testInvalidType() throws Exception {
-        testNullableField(
-                RAW(TypeExtractor.getForClass(java.util.Date.class)), "FAIL", new java.util.Date());
+        testNullableField(RAW(Void.class, VoidSerializer.INSTANCE), "FAIL", new java.util.Date());
     }
 
     @Test
     public void testSerializeDeserializeNestedTypes() throws Exception {
         DataType subDataType0 =
-                ROW(FIELD("f0c0", STRING()), FIELD("f0c1", INT()), FIELD("f0c2", STRING()));
+                ROW(
+                        FIELD("f0c0", STRING()),
+                        FIELD("f0c1", INT()),
+                        FIELD("f0c2", STRING()),
+                        FIELD("f0c3", TIMESTAMP()),
+                        FIELD("f0c4", TIMESTAMP_LTZ()));
         DataType subDataType1 =
-                ROW(FIELD("f1c0", STRING()), FIELD("f1c1", INT()), FIELD("f1c2", STRING()));
+                ROW(
+                        FIELD("f1c0", STRING()),
+                        FIELD("f1c1", INT()),
+                        FIELD("f1c2", STRING()),
+                        FIELD("f0c3", TIMESTAMP()),
+                        FIELD("f0c4", TIMESTAMP_LTZ()));
         DataType dataType = ROW(FIELD("f0", subDataType0), FIELD("f1", subDataType1));
         RowType rowType = (RowType) dataType.getLogicalType();
 
@@ -285,13 +313,39 @@ public class CsvRowDataSerDeSchemaTest {
 
         RowData normalRow =
                 GenericRowData.of(
-                        rowData("hello", 1, "This is 1st top column"),
-                        rowData("world", 2, "This is 2nd top column"));
+                        rowData(
+                                "hello",
+                                1,
+                                "This is 1st top column",
+                                LocalDateTime.parse("1970-01-01T01:02:03"),
+                                Instant.ofEpochMilli(1000)),
+                        rowData(
+                                "world",
+                                2,
+                                "This is 2nd top column",
+                                LocalDateTime.parse("1970-01-01T01:02:04"),
+                                Instant.ofEpochMilli(2000)));
         testSerDeConsistency(normalRow, serSchemaBuilder, deserSchemaBuilder);
 
         RowData nullRow =
-                GenericRowData.of(null, rowData("world", 2, "This is 2nd top column after null"));
+                GenericRowData.of(
+                        null,
+                        rowData(
+                                "world",
+                                2,
+                                "This is 2nd top column after null",
+                                LocalDateTime.parse("1970-01-01T01:02:05"),
+                                Instant.ofEpochMilli(3000)));
         testSerDeConsistency(nullRow, serSchemaBuilder, deserSchemaBuilder);
+    }
+
+    @Test
+    public void testDeserializationWithDisableQuoteCharacter() throws Exception {
+        Consumer<CsvRowDataDeserializationSchema.Builder> deserConfig =
+                (deserSchemaBuilder) ->
+                        deserSchemaBuilder.disableQuoteCharacter().setFieldDelimiter(',');
+
+        testFieldDeserialization(STRING(), "\"abc", "\"abc", deserConfig, ",");
     }
 
     private void testNullableField(DataType fieldType, String string, Object value)
@@ -404,10 +458,20 @@ public class CsvRowDataSerDeSchemaTest {
                 InstantiationUtil.deserializeObject(
                         InstantiationUtil.serializeObject(deserSchemaBuilder.build()),
                         CsvRowDeSerializationSchemaTest.class.getClassLoader());
-        return schema.deserialize(csv.getBytes());
+        return schema.deserialize(csv != null ? csv.getBytes() : null);
     }
 
     private static RowData rowData(String str1, int integer, String str2) {
         return GenericRowData.of(fromString(str1), integer, fromString(str2));
+    }
+
+    private static RowData rowData(
+            String str1, int integer, String str2, LocalDateTime localDateTime, Instant instant) {
+        return GenericRowData.of(
+                fromString(str1),
+                integer,
+                fromString(str2),
+                fromLocalDateTime(localDateTime),
+                fromInstant(instant));
     }
 }

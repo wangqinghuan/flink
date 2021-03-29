@@ -82,7 +82,10 @@ public class RowDataArrowPythonScalarFunctionOperator
     @Override
     public void dispose() throws Exception {
         super.dispose();
-        arrowSerializer.close();
+        if (arrowSerializer != null) {
+            arrowSerializer.close();
+            arrowSerializer = null;
+        }
     }
 
     @Override
@@ -103,6 +106,7 @@ public class RowDataArrowPythonScalarFunctionOperator
             reuseJoinedRow.setRowKind(input.getRowKind());
             rowDataWrapper.collect(reuseJoinedRow.replace(input, arrowSerializer.read(i)));
         }
+        arrowSerializer.resetReader();
     }
 
     @Override
@@ -126,6 +130,7 @@ public class RowDataArrowPythonScalarFunctionOperator
             pythonFunctionRunner.process(baos.toByteArray());
             checkInvokeFinishBundleByCount();
             baos.reset();
+            arrowSerializer.resetWriter();
         }
     }
 }

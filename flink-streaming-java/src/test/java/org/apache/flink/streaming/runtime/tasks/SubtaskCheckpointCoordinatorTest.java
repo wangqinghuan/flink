@@ -24,6 +24,7 @@ import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.core.testutils.OneShotLatch;
 import org.apache.flink.metrics.MetricGroup;
+import org.apache.flink.runtime.checkpoint.CheckpointException;
 import org.apache.flink.runtime.checkpoint.CheckpointMetaData;
 import org.apache.flink.runtime.checkpoint.CheckpointMetricsBuilder;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
@@ -84,14 +85,15 @@ import static org.junit.Assert.fail;
 public class SubtaskCheckpointCoordinatorTest {
 
     @Test
-    public void testInitCheckpoint() throws IOException {
+    public void testInitCheckpoint() throws IOException, CheckpointException {
         assertTrue(initCheckpoint(true, CHECKPOINT));
         assertFalse(initCheckpoint(false, CHECKPOINT));
         assertFalse(initCheckpoint(false, SAVEPOINT));
     }
 
     private boolean initCheckpoint(
-            boolean unalignedCheckpointEnabled, CheckpointType checkpointType) throws IOException {
+            boolean unalignedCheckpointEnabled, CheckpointType checkpointType)
+            throws IOException, CheckpointException {
         class MockWriter extends ChannelStateWriterImpl.NoOpChannelStateWriter {
             private boolean started;
 
@@ -169,7 +171,7 @@ public class SubtaskCheckpointCoordinatorTest {
                 new CheckpointOptions(SAVEPOINT, CheckpointStorageLocationReference.getDefault()),
                 new CheckpointMetricsBuilder(),
                 operatorChain,
-                () -> false);
+                () -> true);
 
         assertEquals(false, broadcastedPriorityEvent.get());
     }
@@ -192,7 +194,7 @@ public class SubtaskCheckpointCoordinatorTest {
                 new CheckpointMetricsBuilder(),
                 new OperatorChain<>(
                         new NoOpStreamTask<>(new DummyEnvironment()), new NonRecordWriter<>()),
-                () -> false);
+                () -> true);
     }
 
     @Test
@@ -249,7 +251,7 @@ public class SubtaskCheckpointCoordinatorTest {
                 CheckpointOptions.forCheckpointWithDefaultLocation(),
                 new CheckpointMetricsBuilder(),
                 operatorChain,
-                () -> true);
+                () -> false);
         assertFalse(checkpointOperator.isCheckpointed());
         assertEquals(-1, stateManager.getReportedCheckpointId());
         assertEquals(0, subtaskCheckpointCoordinator.getAbortedCheckpointSize());
@@ -300,7 +302,7 @@ public class SubtaskCheckpointCoordinatorTest {
                 CheckpointOptions.forCheckpointWithDefaultLocation(),
                 new CheckpointMetricsBuilder(),
                 operatorChain,
-                () -> true);
+                () -> false);
 
         assertEquals(1, recordOrEvents.size());
         Object recordOrEvent = recordOrEvents.get(0);
@@ -355,7 +357,7 @@ public class SubtaskCheckpointCoordinatorTest {
                 CheckpointOptions.forCheckpointWithDefaultLocation(),
                 new CheckpointMetricsBuilder(),
                 operatorChain,
-                () -> true);
+                () -> false);
         rawKeyedStateHandleFuture.awaitRun();
         assertEquals(1, subtaskCheckpointCoordinator.getAsyncCheckpointRunnableSize());
         assertFalse(rawKeyedStateHandleFuture.isCancelled());
@@ -385,7 +387,7 @@ public class SubtaskCheckpointCoordinatorTest {
                 CheckpointOptions.forCheckpointWithDefaultLocation(),
                 new CheckpointMetricsBuilder(),
                 operatorChain,
-                () -> true);
+                () -> false);
         subtaskCheckpointCoordinator.notifyCheckpointAborted(
                 checkpointId, operatorChain, () -> true);
         assertEquals(0, subtaskCheckpointCoordinator.getAbortedCheckpointSize());

@@ -22,8 +22,8 @@ import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.serialization.SerializationSchema;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.formats.common.TimestampFormat;
 import org.apache.flink.formats.json.JsonOptions;
-import org.apache.flink.formats.json.TimestampFormat;
 import org.apache.flink.table.connector.ChangelogMode;
 import org.apache.flink.table.connector.format.DecodingFormat;
 import org.apache.flink.table.connector.format.EncodingFormat;
@@ -41,6 +41,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
+import static org.apache.flink.formats.json.JsonOptions.ENCODE_DECIMAL_AS_PLAIN_NUMBER;
 import static org.apache.flink.formats.json.canal.CanalJsonOptions.DATABASE_INCLUDE;
 import static org.apache.flink.formats.json.canal.CanalJsonOptions.IGNORE_PARSE_ERRORS;
 import static org.apache.flink.formats.json.canal.CanalJsonOptions.JSON_MAP_NULL_KEY_LITERAL;
@@ -84,6 +85,9 @@ public class CanalJsonFormatFactory
         JsonOptions.MapNullKeyMode mapNullKeyMode = JsonOptions.getMapNullKeyMode(formatOptions);
         String mapNullKeyLiteral = formatOptions.get(JSON_MAP_NULL_KEY_LITERAL);
 
+        final boolean encodeDecimalAsPlainNumber =
+                formatOptions.get(ENCODE_DECIMAL_AS_PLAIN_NUMBER);
+
         return new EncodingFormat<SerializationSchema<RowData>>() {
             @Override
             public ChangelogMode getChangelogMode() {
@@ -100,7 +104,11 @@ public class CanalJsonFormatFactory
                     DynamicTableSink.Context context, DataType consumedDataType) {
                 final RowType rowType = (RowType) consumedDataType.getLogicalType();
                 return new CanalJsonSerializationSchema(
-                        rowType, timestampFormat, mapNullKeyMode, mapNullKeyLiteral);
+                        rowType,
+                        timestampFormat,
+                        mapNullKeyMode,
+                        mapNullKeyLiteral,
+                        encodeDecimalAsPlainNumber);
             }
         };
     }
@@ -124,6 +132,7 @@ public class CanalJsonFormatFactory
         options.add(TABLE_INCLUDE);
         options.add(JSON_MAP_NULL_KEY_MODE);
         options.add(JSON_MAP_NULL_KEY_LITERAL);
+        options.add(ENCODE_DECIMAL_AS_PLAIN_NUMBER);
         return options;
     }
 }

@@ -18,7 +18,8 @@
 
 package org.apache.flink.table.planner.plan.stream.sql
 
-import org.apache.flink.table.api.ValidationException
+import org.apache.flink.core.testutils.FlinkMatchers.containsMessage
+import org.apache.flink.table.api.TableException
 import org.apache.flink.table.planner.utils._
 
 import org.junit.Test
@@ -40,6 +41,28 @@ class TableSourceTest extends TableTestBase {
          |) WITH (
          |  'connector' = 'values',
          |  'bounded' = 'false'
+         |)
+       """.stripMargin
+    util.tableEnv.executeSql(ddl)
+
+    util.verifyExecPlan("SELECT rowtime, id, name, val FROM rowTimeT")
+  }
+
+  @Test
+  def testTableSourceWithSourceWatermarks(): Unit = {
+    val ddl =
+      s"""
+         |CREATE TABLE rowTimeT (
+         |  id INT,
+         |  rowtime TIMESTAMP(3),
+         |  val BIGINT,
+         |  name VARCHAR(32),
+         |  WATERMARK FOR rowtime AS SOURCE_WATERMARK()
+         |) WITH (
+         |  'connector' = 'values',
+         |  'bounded' = 'false',
+         |  'disable-lookup' = 'true',
+         |  'enable-watermark-push-down' = 'true'
          |)
        """.stripMargin
     util.tableEnv.executeSql(ddl)
@@ -78,8 +101,9 @@ class TableSourceTest extends TableTestBase {
 
   @Test
   def testProctimeOnWatermarkSpec(): Unit = {
-    thrown.expect(classOf[ValidationException])
-    thrown.expectMessage("Watermark can not be defined for a processing time attribute column.")
+    thrown.expect(classOf[TableException])
+    thrown.expect(
+      containsMessage("A watermark can not be defined for a processing-time attribute."))
     val ddl =
       s"""
          |CREATE TABLE procTimeT (

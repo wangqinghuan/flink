@@ -40,7 +40,6 @@ import org.apache.flink.runtime.highavailability.HighAvailabilityServices;
 import org.apache.flink.runtime.highavailability.RunningJobsRegistry;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobgraph.JobVertex;
-import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobmanager.JobGraphWriter;
 import org.apache.flink.runtime.jobmaster.JobManagerRunner;
@@ -61,11 +60,11 @@ import org.apache.flink.runtime.operators.coordination.CoordinationRequest;
 import org.apache.flink.runtime.operators.coordination.CoordinationResponse;
 import org.apache.flink.runtime.resourcemanager.ResourceManagerGateway;
 import org.apache.flink.runtime.resourcemanager.ResourceOverview;
-import org.apache.flink.runtime.rest.handler.legacy.backpressure.OperatorBackPressureStatsResponse;
 import org.apache.flink.runtime.rpc.FatalErrorHandler;
 import org.apache.flink.runtime.rpc.PermanentlyFencedRpcEndpoint;
 import org.apache.flink.runtime.rpc.RpcService;
 import org.apache.flink.runtime.rpc.akka.AkkaRpcServiceUtils;
+import org.apache.flink.runtime.scheduler.ExecutionGraphInfo;
 import org.apache.flink.runtime.webmonitor.retriever.GatewayRetriever;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.FlinkException;
@@ -123,7 +122,7 @@ public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<Dispatcher
 
     private final DispatcherBootstrapFactory dispatcherBootstrapFactory;
 
-    private final ArchivedExecutionGraphStore archivedExecutionGraphStore;
+    private final ExecutionGraphInfoStore executionGraphInfoStore;
 
     private final JobManagerRunnerFactory jobManagerRunnerFactory;
 
@@ -179,7 +178,7 @@ public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<Dispatcher
 
         this.historyServerArchivist = dispatcherServices.getHistoryServerArchivist();
 
-        this.archivedExecutionGraphStore = dispatcherServices.getArchivedExecutionGraphStore();
+        this.executionGraphInfoStore = dispatcherServices.getArchivedExecutionGraphStore();
 
         this.jobManagerRunnerFactory = dispatcherServices.getJobManagerRunnerFactory();
 
@@ -443,7 +442,7 @@ public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<Dispatcher
                 && executionType == ExecutionType.RECOVERY) {
             return dispatcherJobFailed(jobId, dispatcherJobResult.getInitializationFailure());
         } else {
-            return jobReachedGloballyTerminalState(dispatcherJobResult.getArchivedExecutionGraph());
+            return jobReachedGloballyTerminalState(dispatcherJobResult.getExecutionGraphInfo());
         }
     }
 
@@ -559,8 +558,7 @@ public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<Dispatcher
         CompletableFuture<Collection<JobStatus>> allJobsFuture =
                 allOptionalJobsFuture.thenApply(this::flattenOptionalCollection);
 
-        final JobsOverview completedJobsOverview =
-                archivedExecutionGraphStore.getStoredJobsOverview();
+        final JobsOverview completedJobsOverview = executionGraphInfoStore.getStoredJobsOverview();
 
         return allJobsFuture.thenCombine(
                 taskManagerOverviewFuture,
@@ -583,7 +581,7 @@ public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<Dispatcher
                 optionalCombinedJobDetails.thenApply(this::flattenOptionalCollection);
 
         final Collection<JobDetails> completedJobDetails =
-                archivedExecutionGraphStore.getAvailableJobDetails();
+                executionGraphInfoStore.getAvailableJobDetails();
 
         return combinedJobDetails.thenApply(
                 (Collection<JobDetails> runningJobDetails) -> {
@@ -605,7 +603,7 @@ public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<Dispatcher
                         () -> {
                             // is it a completed job?
                             final JobDetails jobDetails =
-                                    archivedExecutionGraphStore.getAvailableJobDetails(jobId);
+                                    executionGraphInfoStore.getAvailableJobDetails(jobId);
                             if (jobDetails == null) {
                                 return FutureUtils.completedExceptionally(
                                         new FlinkJobNotFoundException(jobId));
@@ -616,24 +614,18 @@ public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<Dispatcher
     }
 
     @Override
-    public CompletableFuture<OperatorBackPressureStatsResponse> requestOperatorBackPressureStats(
-            final JobID jobId, final JobVertexID jobVertexId) {
-        return performOperationOnJobMasterGateway(
-                jobId, gateway -> gateway.requestOperatorBackPressureStats(jobVertexId));
-    }
-
-    @Override
-    public CompletableFuture<ArchivedExecutionGraph> requestJob(JobID jobId, Time timeout) {
-        Function<Throwable, ArchivedExecutionGraph> checkExecutionGraphStoreOnException =
+    public CompletableFuture<ExecutionGraphInfo> requestExecutionGraphInfo(
+            JobID jobId, Time timeout) {
+        Function<Throwable, ExecutionGraphInfo> checkExecutionGraphStoreOnException =
                 throwable -> {
                     // check whether it is a completed job
-                    final ArchivedExecutionGraph archivedExecutionGraph =
-                            archivedExecutionGraphStore.get(jobId);
-                    if (archivedExecutionGraph == null) {
+                    final ExecutionGraphInfo executionGraphInfo =
+                            executionGraphInfoStore.get(jobId);
+                    if (executionGraphInfo == null) {
                         throw new CompletionException(
                                 ExceptionUtils.stripCompletionException(throwable));
                     } else {
-                        return archivedExecutionGraph;
+                        return executionGraphInfo;
                     }
                 };
         Optional<DispatcherJob> maybeJob = getDispatcherJob(jobId);
@@ -647,21 +639,22 @@ public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<Dispatcher
         DispatcherJob job = runningJobs.get(jobId);
 
         if (job == null) {
-            final ArchivedExecutionGraph archivedExecutionGraph =
-                    archivedExecutionGraphStore.get(jobId);
+            final ExecutionGraphInfo executionGraphInfo = executionGraphInfoStore.get(jobId);
 
-            if (archivedExecutionGraph == null) {
+            if (executionGraphInfo == null) {
                 return FutureUtils.completedExceptionally(new FlinkJobNotFoundException(jobId));
             } else {
                 return CompletableFuture.completedFuture(
-                        JobResult.createFrom(archivedExecutionGraph));
+                        JobResult.createFrom(executionGraphInfo.getArchivedExecutionGraph()));
             }
         } else {
             return job.getResultFuture()
                     .thenApply(
                             dispatcherJobResult ->
                                     JobResult.createFrom(
-                                            dispatcherJobResult.getArchivedExecutionGraph()));
+                                            dispatcherJobResult
+                                                    .getExecutionGraphInfo()
+                                                    .getArchivedExecutionGraph()));
         }
     }
 
@@ -704,13 +697,10 @@ public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<Dispatcher
     public CompletableFuture<String> stopWithSavepoint(
             final JobID jobId,
             final String targetDirectory,
-            final boolean advanceToEndOfEventTime,
+            final boolean terminate,
             final Time timeout) {
         return performOperationOnJobMasterGateway(
-                jobId,
-                gateway ->
-                        gateway.stopWithSavepoint(
-                                targetDirectory, advanceToEndOfEventTime, timeout));
+                jobId, gateway -> gateway.stopWithSavepoint(targetDirectory, terminate, timeout));
     }
 
     @Override
@@ -836,7 +826,9 @@ public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<Dispatcher
     }
 
     protected CleanupJobState jobReachedGloballyTerminalState(
-            ArchivedExecutionGraph archivedExecutionGraph) {
+            ExecutionGraphInfo executionGraphInfo) {
+        ArchivedExecutionGraph archivedExecutionGraph =
+                executionGraphInfo.getArchivedExecutionGraph();
         Preconditions.checkArgument(
                 archivedExecutionGraph.getState().isGloballyTerminalState(),
                 "Job %s is in state %s which is not globally terminal.",
@@ -848,32 +840,32 @@ public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<Dispatcher
                 archivedExecutionGraph.getJobID(),
                 archivedExecutionGraph.getState());
 
-        archiveExecutionGraph(archivedExecutionGraph);
+        archiveExecutionGraph(executionGraphInfo);
 
         return CleanupJobState.GLOBAL;
     }
 
-    private void archiveExecutionGraph(ArchivedExecutionGraph archivedExecutionGraph) {
+    private void archiveExecutionGraph(ExecutionGraphInfo executionGraphInfo) {
         try {
-            archivedExecutionGraphStore.put(archivedExecutionGraph);
+            executionGraphInfoStore.put(executionGraphInfo);
         } catch (IOException e) {
             log.info(
                     "Could not store completed job {}({}).",
-                    archivedExecutionGraph.getJobName(),
-                    archivedExecutionGraph.getJobID(),
+                    executionGraphInfo.getArchivedExecutionGraph().getJobName(),
+                    executionGraphInfo.getArchivedExecutionGraph().getJobID(),
                     e);
         }
 
         final CompletableFuture<Acknowledge> executionGraphFuture =
-                historyServerArchivist.archiveExecutionGraph(archivedExecutionGraph);
+                historyServerArchivist.archiveExecutionGraph(executionGraphInfo);
 
         executionGraphFuture.whenComplete(
                 (Acknowledge ignored, Throwable throwable) -> {
                     if (throwable != null) {
                         log.info(
                                 "Could not archive completed job {}({}) to the history server.",
-                                archivedExecutionGraph.getJobName(),
-                                archivedExecutionGraph.getJobID(),
+                                executionGraphInfo.getArchivedExecutionGraph().getJobName(),
+                                executionGraphInfo.getArchivedExecutionGraph().getJobID(),
                                 throwable);
                     }
                 });

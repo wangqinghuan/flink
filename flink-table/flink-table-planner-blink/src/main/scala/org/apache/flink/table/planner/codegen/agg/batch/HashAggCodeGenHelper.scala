@@ -36,10 +36,11 @@ import org.apache.flink.table.planner.expressions.converter.ExpressionConverter
 import org.apache.flink.table.planner.functions.aggfunctions.DeclarativeAggregateFunction
 import org.apache.flink.table.planner.plan.utils.{AggregateInfo, SortUtil}
 import org.apache.flink.table.runtime.generated.{NormalizedKeyComputer, RecordComparator}
-import org.apache.flink.table.runtime.operators.aggregate.{BytesHashMap, BytesHashMapSpillMemorySegmentPool}
+import org.apache.flink.table.runtime.operators.aggregate.BytesHashMapSpillMemorySegmentPool
 import org.apache.flink.table.runtime.operators.sort.BufferedKVExternalSorter
 import org.apache.flink.table.runtime.typeutils.BinaryRowDataSerializer
 import org.apache.flink.table.runtime.util.KeyValueIterator
+import org.apache.flink.table.runtime.util.collections.binary.{BytesHashMap, BytesMap}
 import org.apache.flink.table.types.logical.{LogicalType, RowType}
 
 import scala.collection.JavaConversions._
@@ -549,10 +550,11 @@ object HashAggCodeGenHelper {
       initedAggBuffer: GeneratedExpression,
       lookupInfo: String,
       currentAggBufferTerm: String): String = {
+    val lookupInfoTypeTerm = classOf[BytesMap.LookupInfo[_, _]].getCanonicalName
     s"""
        | // reset aggregate map retry append
        |$aggregateMapTerm.reset();
-       |$lookupInfo = $aggregateMapTerm.lookup($currentKeyTerm);
+       |$lookupInfo = ($lookupInfoTypeTerm) $aggregateMapTerm.lookup($currentKeyTerm);
        |try {
        |  $currentAggBufferTerm =
        |    $aggregateMapTerm.append($lookupInfo, ${initedAggBuffer.resultTerm});
@@ -813,13 +815,10 @@ object HashAggCodeGenHelper {
       keyComputerTerm: String,
       recordComparatorTerm: String,
       aggMapKeyType: RowType) : String = {
-    val keyFieldTypes = aggMapKeyType.getChildren.toArray(Array[LogicalType]())
-    val keys = keyFieldTypes.indices.toArray
-    val orders = keys.map(_ => true)
-    val nullsIsLast = SortUtil.getNullDefaultOrders(orders)
-
     val sortCodeGenerator = new SortCodeGenerator(
-      ctx.tableConfig, keys, keyFieldTypes, orders, nullsIsLast)
+        ctx.tableConfig,
+        aggMapKeyType,
+        SortUtil.getAscendingSortSpec(Array.range(0, aggMapKeyType.getFieldCount)))
     val computer = sortCodeGenerator.generateNormalizedKeyComputer("AggMapKeyComputer")
     val comparator = sortCodeGenerator.generateRecordComparator("AggMapValueComparator")
 

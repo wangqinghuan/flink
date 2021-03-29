@@ -21,6 +21,7 @@ package org.apache.flink.runtime.state;
 import org.apache.flink.api.common.state.CheckpointListener;
 import org.apache.flink.runtime.checkpoint.CheckpointMetaData;
 import org.apache.flink.runtime.checkpoint.CheckpointMetrics;
+import org.apache.flink.runtime.checkpoint.InflightDataRescalingDescriptor;
 import org.apache.flink.runtime.checkpoint.PrioritizedOperatorSubtaskState;
 import org.apache.flink.runtime.checkpoint.TaskStateSnapshot;
 import org.apache.flink.runtime.checkpoint.channel.SequentialChannelStateReader;
@@ -55,6 +56,19 @@ public interface TaskStateManager extends CheckpointListener, AutoCloseable {
             @Nonnull CheckpointMetrics checkpointMetrics,
             @Nullable TaskStateSnapshot acknowledgedState,
             @Nullable TaskStateSnapshot localState);
+
+    InflightDataRescalingDescriptor getInputRescalingDescriptor();
+
+    InflightDataRescalingDescriptor getOutputRescalingDescriptor();
+
+    /**
+     * Report the stats for state snapshots for an aborted checkpoint.
+     *
+     * @param checkpointMetaData meta data from the checkpoint request.
+     * @param checkpointMetrics task level metrics for the checkpoint.
+     */
+    void reportIncompleteTaskStateSnapshots(
+            CheckpointMetaData checkpointMetaData, CheckpointMetrics checkpointMetrics);
 
     /**
      * Returns means to restore previously reported state of an operator running in the owning task.

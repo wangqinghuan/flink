@@ -31,8 +31,8 @@ import org.apache.flink.runtime.checkpoint.CheckpointRetentionPolicy;
 import org.apache.flink.runtime.concurrent.FutureUtils;
 import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.jobgraph.JobGraph;
+import org.apache.flink.runtime.jobgraph.JobGraphBuilder;
 import org.apache.flink.runtime.jobgraph.JobVertex;
-import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
 import org.apache.flink.runtime.jobgraph.tasks.CheckpointCoordinatorConfiguration;
 import org.apache.flink.runtime.jobgraph.tasks.JobCheckpointingSettings;
@@ -50,7 +50,6 @@ import javax.management.ObjectName;
 
 import java.lang.management.ManagementFactory;
 import java.time.Duration;
-import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -89,13 +88,10 @@ public class JMXJobManagerMetricTest extends TestLogger {
         try {
             JobVertex sourceJobVertex = new JobVertex("Source");
             sourceJobVertex.setInvokableClass(BlockingInvokable.class);
+            sourceJobVertex.setParallelism(1);
 
-            JobGraph jobGraph = new JobGraph("TestingJob", sourceJobVertex);
-            jobGraph.setSnapshotSettings(
+            final JobCheckpointingSettings jobCheckpointingSettings =
                     new JobCheckpointingSettings(
-                            Collections.<JobVertexID>emptyList(),
-                            Collections.<JobVertexID>emptyList(),
-                            Collections.<JobVertexID>emptyList(),
                             new CheckpointCoordinatorConfiguration(
                                     500,
                                     500,
@@ -106,7 +102,14 @@ public class JMXJobManagerMetricTest extends TestLogger {
                                     false,
                                     false,
                                     0),
-                            null));
+                            null);
+
+            final JobGraph jobGraph =
+                    JobGraphBuilder.newStreamingJobGraphBuilder()
+                            .setJobName("TestingJob")
+                            .addJobVertex(sourceJobVertex)
+                            .setJobCheckpointingSettings(jobCheckpointingSettings)
+                            .build();
 
             ClusterClient<?> client = MINI_CLUSTER_RESOURCE.getClusterClient();
             client.submitJob(jobGraph).get();

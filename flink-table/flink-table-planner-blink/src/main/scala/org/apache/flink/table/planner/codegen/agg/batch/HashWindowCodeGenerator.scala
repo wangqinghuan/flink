@@ -18,9 +18,6 @@
 
 package org.apache.flink.table.planner.codegen.agg.batch
 
-import org.apache.calcite.rel.`type`.RelDataType
-import org.apache.calcite.tools.RelBuilder
-import org.apache.commons.math3.util.ArithmeticUtils
 import org.apache.flink.api.java.tuple.{Tuple2 => JTuple2}
 import org.apache.flink.api.java.typeutils.ListTypeInfo
 import org.apache.flink.runtime.operators.sort.QuickSort
@@ -28,24 +25,28 @@ import org.apache.flink.streaming.api.operators.OneInputStreamOperator
 import org.apache.flink.table.api.Types
 import org.apache.flink.table.data.RowData
 import org.apache.flink.table.data.binary.BinaryRowData
-import org.apache.flink.table.planner.calcite.FlinkRelBuilder.PlannerNamedWindowProperty
 import org.apache.flink.table.planner.codegen.CodeGenUtils.{BINARY_ROW, newName}
 import org.apache.flink.table.planner.codegen.OperatorCodeGenerator.generateCollect
 import org.apache.flink.table.planner.codegen._
 import org.apache.flink.table.planner.codegen.agg.batch.AggCodeGenHelper.genGroupKeyChangedCheckCode
 import org.apache.flink.table.planner.codegen.agg.batch.HashAggCodeGenHelper.{genHashAggOutputExpr, genRetryAppendToMap, prepareHashAggKVTypes, prepareHashAggMap}
+import org.apache.flink.table.planner.expressions.PlannerNamedWindowProperty
 import org.apache.flink.table.planner.plan.logical.{LogicalWindow, SlidingGroupWindow, TumblingGroupWindow}
 import org.apache.flink.table.planner.plan.utils.AggregateInfoList
 import org.apache.flink.table.runtime.generated.GeneratedOperator
 import org.apache.flink.table.runtime.operators.TableStreamOperator
-import org.apache.flink.table.runtime.operators.aggregate.{BytesHashMapSpillMemorySegmentPool, BytesMap}
+import org.apache.flink.table.runtime.operators.aggregate.BytesHashMapSpillMemorySegmentPool
 import org.apache.flink.table.runtime.operators.sort.BinaryKVInMemorySortBuffer
 import org.apache.flink.table.runtime.operators.window.TimeWindow
 import org.apache.flink.table.runtime.types.TypeInfoLogicalTypeConverter.fromTypeInfoToLogicalType
 import org.apache.flink.table.runtime.typeutils.BinaryRowDataSerializer
 import org.apache.flink.table.runtime.util.KeyValueIterator
+import org.apache.flink.table.runtime.util.collections.binary.BytesMap
 import org.apache.flink.table.types.logical.{LogicalType, RowType}
 import org.apache.flink.util.MutableObjectIterator
+
+import org.apache.calcite.tools.RelBuilder
+import org.apache.commons.math3.util.ArithmeticUtils
 
 import scala.collection.JavaConversions._
 
@@ -71,7 +72,7 @@ class HashWindowCodeGenerator(
     inputTimeIsDate: Boolean,
     namedProperties: Seq[PlannerNamedWindowProperty],
     aggInfoList: AggregateInfoList,
-    inputRowType: RelDataType,
+    inputRowType: RowType,
     grouping: Array[Int],
     auxGrouping: Array[Int],
     enableAssignPane: Boolean = true,
@@ -771,8 +772,8 @@ class HashWindowCodeGenerator(
       ""
     }
 
-    val lookupInfo = ctx.addReusableLocalVariable(
-      classOf[BytesMap.LookupInfo[_]].getCanonicalName, "lookupInfo")
+    val lookupInfoTypeTerm = classOf[BytesMap.LookupInfo[_, _]].getCanonicalName
+    val lookupInfo = ctx.addReusableLocalVariable(lookupInfoTypeTerm, "lookupInfo")
     val dealWithAggHashMapOOM = if (isFinal) {
       s"""throw new java.io.IOException("Hash window aggregate map OOM.");"""
     } else {
@@ -793,7 +794,7 @@ class HashWindowCodeGenerator(
     val process =
       s"""
          |// look up output buffer using current key (grouping keys ..., assigned timestamp)
-         |$lookupInfo = $aggregateMapTerm.lookup($aggMapKey);
+         |$lookupInfo = ($lookupInfoTypeTerm) $aggregateMapTerm.lookup($aggMapKey);
          |$currentAggBufferTerm = ($binaryRowTypeTerm) $lookupInfo.getValue();
          |if (!$lookupInfo.isFound()) {
          |  $lazyInitAggBufferCode

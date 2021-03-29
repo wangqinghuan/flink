@@ -20,6 +20,7 @@ package org.apache.flink.runtime.jobgraph.tasks;
 
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.runtime.checkpoint.CheckpointException;
 import org.apache.flink.runtime.checkpoint.CheckpointMetaData;
 import org.apache.flink.runtime.checkpoint.CheckpointMetricsBuilder;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
@@ -209,15 +210,11 @@ public abstract class AbstractInvokable {
      *
      * @param checkpointMetaData Meta data for about this checkpoint
      * @param checkpointOptions Options for performing this checkpoint
-     * @param advanceToEndOfEventTime Flag indicating if the source should inject a {@code
-     *     MAX_WATERMARK} in the pipeline to fire any registered event-time timers
      * @return future with value of {@code false} if the checkpoint was not carried out, {@code
      *     true} otherwise
      */
     public Future<Boolean> triggerCheckpointAsync(
-            CheckpointMetaData checkpointMetaData,
-            CheckpointOptions checkpointOptions,
-            boolean advanceToEndOfEventTime) {
+            CheckpointMetaData checkpointMetaData, CheckpointOptions checkpointOptions) {
         throw new UnsupportedOperationException(
                 String.format(
                         "triggerCheckpointAsync not supported by %s", this.getClass().getName()));
@@ -253,7 +250,8 @@ public abstract class AbstractInvokable {
      * @param checkpointId The ID of the checkpoint to be aborted.
      * @param cause The reason why the checkpoint was aborted during alignment
      */
-    public void abortCheckpointOnBarrier(long checkpointId, Throwable cause) throws IOException {
+    public void abortCheckpointOnBarrier(long checkpointId, CheckpointException cause)
+            throws IOException {
         throw new UnsupportedOperationException(
                 String.format(
                         "abortCheckpointOnBarrier not supported by %s", this.getClass().getName()));

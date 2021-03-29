@@ -26,15 +26,14 @@ import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.planner.codegen.sort.ComparatorCodeGenerator;
 import org.apache.flink.table.planner.delegation.PlannerBase;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecEdge;
-import org.apache.flink.table.planner.plan.nodes.exec.ExecNode;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeBase;
+import org.apache.flink.table.planner.plan.nodes.exec.InputProperty;
+import org.apache.flink.table.planner.plan.utils.SortUtil;
 import org.apache.flink.table.runtime.operators.sort.RankOperator;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
-import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
 
 import java.util.Collections;
-import java.util.stream.IntStream;
 
 /**
  * {@link BatchExecNode} for Rank.
@@ -55,10 +54,10 @@ public class BatchExecRank extends ExecNodeBase<RowData> implements BatchExecNod
             long rankStart,
             long rankEnd,
             boolean outputRankNumber,
-            ExecEdge inputEdge,
+            InputProperty inputProperty,
             RowType outputType,
             String description) {
-        super(Collections.singletonList(inputEdge), outputType, description);
+        super(Collections.singletonList(inputProperty), outputType, description);
         this.partitionFields = partitionFields;
         this.sortFields = sortFields;
         this.rankStart = rankStart;
@@ -69,16 +68,11 @@ public class BatchExecRank extends ExecNodeBase<RowData> implements BatchExecNod
     @SuppressWarnings("unchecked")
     @Override
     protected Transformation<RowData> translateToPlanInternal(PlannerBase planner) {
-        ExecNode<RowData> inputNode = (ExecNode<RowData>) getInputNodes().get(0);
-        Transformation<RowData> inputTransform = inputNode.translateToPlan(planner);
+        ExecEdge inputEdge = getInputEdges().get(0);
+        Transformation<RowData> inputTransform =
+                (Transformation<RowData>) inputEdge.translateToPlan(planner);
 
-        RowType inputType = (RowType) inputNode.getOutputType();
-        LogicalType[] partitionTypes =
-                IntStream.of(partitionFields)
-                        .mapToObj(inputType::getTypeAt)
-                        .toArray(LogicalType[]::new);
-        LogicalType[] sortTypes =
-                IntStream.of(sortFields).mapToObj(inputType::getTypeAt).toArray(LogicalType[]::new);
+        RowType inputType = (RowType) inputEdge.getOutputType();
 
         // operator needn't cache data
         // The collation for the partition-by and order-by fields is inessential here,
@@ -88,34 +82,22 @@ public class BatchExecRank extends ExecNodeBase<RowData> implements BatchExecNod
                         ComparatorCodeGenerator.gen(
                                 planner.getTableConfig(),
                                 "PartitionByComparator",
-                                partitionFields,
-                                partitionTypes,
-                                new boolean[partitionFields.length],
-                                new boolean[partitionFields.length]),
+                                inputType,
+                                SortUtil.getAscendingSortSpec(partitionFields)),
                         ComparatorCodeGenerator.gen(
                                 planner.getTableConfig(),
                                 "OrderByComparator",
-                                sortFields,
-                                sortTypes,
-                                new boolean[sortFields.length],
-                                new boolean[sortFields.length]),
+                                inputType,
+                                SortUtil.getAscendingSortSpec(sortFields)),
                         rankStart,
                         rankEnd,
                         outputRankNumber);
 
-        OneInputTransformation<RowData, RowData> transform =
-                new OneInputTransformation<>(
-                        inputTransform,
-                        getDesc(),
-                        SimpleOperatorFactory.of(operator),
-                        InternalTypeInfo.of((RowType) getOutputType()),
-                        inputTransform.getParallelism());
-
-        if (inputsContainSingleton()) {
-            transform.setParallelism(1);
-            transform.setMaxParallelism(1);
-        }
-
-        return transform;
+        return new OneInputTransformation<>(
+                inputTransform,
+                getDescription(),
+                SimpleOperatorFactory.of(operator),
+                InternalTypeInfo.of((RowType) getOutputType()),
+                inputTransform.getParallelism());
     }
 }

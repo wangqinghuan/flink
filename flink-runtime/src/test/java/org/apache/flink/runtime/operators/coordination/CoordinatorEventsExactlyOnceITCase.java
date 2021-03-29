@@ -33,8 +33,8 @@ import org.apache.flink.runtime.checkpoint.StateObjectCollection;
 import org.apache.flink.runtime.checkpoint.TaskStateSnapshot;
 import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.jobgraph.JobGraph;
+import org.apache.flink.runtime.jobgraph.JobGraphBuilder;
 import org.apache.flink.runtime.jobgraph.JobVertex;
-import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
 import org.apache.flink.runtime.jobgraph.tasks.CheckpointCoordinatorConfiguration;
@@ -75,7 +75,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.junit.Assert.assertEquals;
@@ -143,8 +142,13 @@ public class CoordinatorEventsExactlyOnceITCase extends TestLogger {
                 buildJobVertex("TASK_1", numEvents1, delay1, OPERATOR_1_ACCUMULATOR);
         final JobVertex task2 =
                 buildJobVertex("TASK_2", numEvents2, delay2, OPERATOR_2_ACCUMULATOR);
-        final JobGraph jobGraph = new JobGraph("Coordinator Events Job", task1, task2);
-        jobGraph.setSnapshotSettings(createCheckpointSettings(task1, task2));
+
+        final JobGraph jobGraph =
+                JobGraphBuilder.newStreamingJobGraphBuilder()
+                        .setJobName("Coordinator Events Job")
+                        .addJobVertices(Arrays.asList(task1, task2))
+                        .setJobCheckpointingSettings(createCheckpointSettings(task1, task2))
+                        .build();
 
         final JobExecutionResult result = miniCluster.executeJobBlocking(jobGraph);
 
@@ -202,9 +206,6 @@ public class CoordinatorEventsExactlyOnceITCase extends TestLogger {
     }
 
     private static JobCheckpointingSettings createCheckpointSettings(JobVertex... vertices) {
-        final List<JobVertexID> ids =
-                Arrays.stream(vertices).map(JobVertex::getID).collect(Collectors.toList());
-
         final CheckpointCoordinatorConfiguration coordCfg =
                 new CheckpointCoordinatorConfiguration.CheckpointCoordinatorConfigurationBuilder()
                         .setMaxConcurrentCheckpoints(1)
@@ -212,7 +213,7 @@ public class CoordinatorEventsExactlyOnceITCase extends TestLogger {
                         .setCheckpointTimeout(100_000)
                         .build();
 
-        return new JobCheckpointingSettings(ids, ids, ids, coordCfg, null);
+        return new JobCheckpointingSettings(coordCfg, null);
     }
 
     // ------------------------------------------------------------------------
@@ -425,9 +426,7 @@ public class CoordinatorEventsExactlyOnceITCase extends TestLogger {
 
         @Override
         public Future<Boolean> triggerCheckpointAsync(
-                CheckpointMetaData checkpointMetaData,
-                CheckpointOptions checkpointOptions,
-                boolean advanceToEndOfEventTime) {
+                CheckpointMetaData checkpointMetaData, CheckpointOptions checkpointOptions) {
             actions.add(checkpointMetaData); // this signals the main thread should do a checkpoint
             return CompletableFuture.completedFuture(true);
         }

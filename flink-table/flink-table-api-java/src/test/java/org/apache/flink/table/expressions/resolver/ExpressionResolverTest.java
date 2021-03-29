@@ -27,6 +27,7 @@ import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.TableConfig;
 import org.apache.flink.table.api.TableSchema;
 import org.apache.flink.table.catalog.ObjectIdentifier;
+import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.expressions.CallExpression;
 import org.apache.flink.table.expressions.Expression;
 import org.apache.flink.table.expressions.FieldReferenceExpression;
@@ -331,13 +332,19 @@ public class ExpressionResolverTest {
                             name -> Optional.empty(),
                             new FunctionLookupMock(functions),
                             new DataTypeFactoryMock(),
+                            (sqlExpression, inputSchema) -> {
+                                throw new UnsupportedOperationException();
+                            },
                             Arrays.stream(schemas)
                                     .map(
                                             schema ->
                                                     (QueryOperation)
                                                             new CatalogQueryOperation(
                                                                     ObjectIdentifier.of("", "", ""),
-                                                                    schema))
+                                                                    ResolvedSchema.physical(
+                                                                            schema.getFieldNames(),
+                                                                            schema
+                                                                                    .getFieldDataTypes())))
                                     .toArray(QueryOperation[]::new))
                     .build();
         }

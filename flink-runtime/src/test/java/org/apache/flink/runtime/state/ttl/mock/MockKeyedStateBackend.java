@@ -40,6 +40,7 @@ import org.apache.flink.runtime.state.Keyed;
 import org.apache.flink.runtime.state.KeyedStateHandle;
 import org.apache.flink.runtime.state.PriorityComparable;
 import org.apache.flink.runtime.state.PriorityComparator;
+import org.apache.flink.runtime.state.SavepointResources;
 import org.apache.flink.runtime.state.SharedStateRegistry;
 import org.apache.flink.runtime.state.SnapshotResult;
 import org.apache.flink.runtime.state.StateSnapshotTransformer;
@@ -181,11 +182,6 @@ public class MockKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     }
 
     @Override
-    public boolean requiresLegacySynchronousTimerSnapshots() {
-        return false;
-    }
-
-    @Override
     public void notifyCheckpointComplete(long checkpointId) {
         // noop
     }
@@ -228,6 +224,13 @@ public class MockKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                         SnapshotResult.of(
                                 new MockKeyedStateHandle<>(
                                         copy(stateValues, stateSnapshotFilters))));
+    }
+
+    @Nonnull
+    @Override
+    public SavepointResources<K> savepoint() throws Exception {
+        throw new UnsupportedOperationException(
+                "Unified savepoints are not supported on this testing StateBackend.");
     }
 
     static <K> Map<String, Map<K, Map<Object, Object>>> copy(
@@ -278,7 +281,7 @@ public class MockKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
     @Nonnull
     @Override
-    public <T extends HeapPriorityQueueElement & PriorityComparable & Keyed>
+    public <T extends HeapPriorityQueueElement & PriorityComparable<? super T> & Keyed<?>>
             KeyGroupedInternalPriorityQueue<T> create(
                     @Nonnull String stateName,
                     @Nonnull TypeSerializer<T> byteOrderedElementSerializer) {

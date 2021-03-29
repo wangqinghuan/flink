@@ -20,6 +20,7 @@ package org.apache.flink.runtime.resourcemanager.active;
 
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.ResourceManagerOptions;
 import org.apache.flink.runtime.clusterframework.TaskExecutorProcessSpec;
 import org.apache.flink.runtime.clusterframework.TaskExecutorProcessUtils;
 import org.apache.flink.runtime.clusterframework.types.ResourceID;
@@ -48,6 +49,7 @@ import org.apache.flink.util.function.RunnableWithException;
 import org.junit.ClassRule;
 import org.junit.Test;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -57,11 +59,13 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThan;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.fail;
 
 /** Tests for {@link ActiveResourceManager}. */
 public class ActiveResourceManagerTest extends TestLogger {
@@ -72,6 +76,8 @@ public class ActiveResourceManagerTest extends TestLogger {
 
     private static final long TIMEOUT_SEC = 5L;
     private static final Time TIMEOUT_TIME = Time.seconds(TIMEOUT_SEC);
+    private static final Time TESTING_START_WORKER_INTERVAL = Time.milliseconds(50);
+    private static final long TESTING_START_WORKER_TIMEOUT_MS = 50;
 
     private static final WorkerResourceSpec WORKER_RESOURCE_SPEC = WorkerResourceSpec.ZERO;
 
@@ -488,6 +494,166 @@ public class ActiveResourceManagerTest extends TestLogger {
         };
     }
 
+    @Test
+    public void testStartWorkerIntervalOnWorkerTerminationExceedFailureRate() throws Exception {
+        new Context() {
+            {
+                flinkConfig.setDouble(ResourceManagerOptions.START_WORKER_MAX_FAILURE_RATE, 1);
+                flinkConfig.set(
+                        ResourceManagerOptions.START_WORKER_RETRY_INTERVAL,
+                        Duration.ofMillis(TESTING_START_WORKER_INTERVAL.toMilliseconds()));
+
+                final AtomicInteger requestCount = new AtomicInteger(0);
+
+                final List<ResourceID> tmResourceIds = new ArrayList<>();
+                tmResourceIds.add(ResourceID.generate());
+                tmResourceIds.add(ResourceID.generate());
+
+                final List<CompletableFuture<Long>> requestWorkerFromDriverFutures =
+                        new ArrayList<>();
+                requestWorkerFromDriverFutures.add(new CompletableFuture<>());
+                requestWorkerFromDriverFutures.add(new CompletableFuture<>());
+
+                driverBuilder.setRequestResourceFunction(
+                        taskExecutorProcessSpec -> {
+                            int idx = requestCount.getAndIncrement();
+                            assertThat(idx, lessThan(2));
+
+                            requestWorkerFromDriverFutures
+                                    .get(idx)
+                                    .complete(System.currentTimeMillis());
+                            return CompletableFuture.completedFuture(tmResourceIds.get(idx));
+                        });
+
+                slotManagerBuilder.setGetRequiredResourcesSupplier(
+                        () -> Collections.singletonMap(WORKER_RESOURCE_SPEC, 1));
+
+                runTest(
+                        () -> {
+                            // received worker request, verify requesting from driver
+                            CompletableFuture<Boolean> startNewWorkerFuture =
+                                    runInMainThread(
+                                            () ->
+                                                    getResourceManager()
+                                                            .startNewWorker(WORKER_RESOURCE_SPEC));
+                            long t1 =
+                                    requestWorkerFromDriverFutures
+                                            .get(0)
+                                            .get(TIMEOUT_SEC, TimeUnit.SECONDS);
+                            assertThat(
+                                    startNewWorkerFuture.get(TIMEOUT_SEC, TimeUnit.SECONDS),
+                                    is(true));
+
+                            // first worker failed before register, verify requesting another worker
+                            // from driver
+                            runInMainThread(
+                                    () ->
+                                            getResourceManager()
+                                                    .onWorkerTerminated(
+                                                            tmResourceIds.get(0),
+                                                            "terminate for testing"));
+                            long t2 =
+                                    requestWorkerFromDriverFutures
+                                            .get(1)
+                                            .get(TIMEOUT_SEC, TimeUnit.SECONDS);
+
+                            // validate trying creating worker twice, with proper interval
+                            assertThat(
+                                    (t2 - t1),
+                                    greaterThanOrEqualTo(
+                                            TESTING_START_WORKER_INTERVAL.toMilliseconds()));
+                            // second worker registered, verify registration succeed
+                            CompletableFuture<RegistrationResponse> registerTaskExecutorFuture =
+                                    registerTaskExecutor(tmResourceIds.get(1));
+                            assertThat(
+                                    registerTaskExecutorFuture.get(TIMEOUT_SEC, TimeUnit.SECONDS),
+                                    instanceOf(RegistrationResponse.Success.class));
+                        });
+            }
+        };
+    }
+
+    @Test
+    public void testStartWorkerIntervalOnRequestWorkerFailure() throws Exception {
+        new Context() {
+            {
+                flinkConfig.setDouble(ResourceManagerOptions.START_WORKER_MAX_FAILURE_RATE, 1);
+                flinkConfig.set(
+                        ResourceManagerOptions.START_WORKER_RETRY_INTERVAL,
+                        Duration.ofMillis(TESTING_START_WORKER_INTERVAL.toMilliseconds()));
+
+                final AtomicInteger requestCount = new AtomicInteger(0);
+                final ResourceID tmResourceId = ResourceID.generate();
+
+                final List<CompletableFuture<ResourceID>> resourceIdFutures = new ArrayList<>();
+                resourceIdFutures.add(new CompletableFuture<>());
+                resourceIdFutures.add(new CompletableFuture<>());
+
+                final List<CompletableFuture<Long>> requestWorkerFromDriverFutures =
+                        new ArrayList<>();
+                requestWorkerFromDriverFutures.add(new CompletableFuture<>());
+                requestWorkerFromDriverFutures.add(new CompletableFuture<>());
+
+                driverBuilder.setRequestResourceFunction(
+                        taskExecutorProcessSpec -> {
+                            int idx = requestCount.getAndIncrement();
+                            assertThat(idx, lessThan(2));
+
+                            requestWorkerFromDriverFutures
+                                    .get(idx)
+                                    .complete(System.currentTimeMillis());
+                            return resourceIdFutures.get(idx);
+                        });
+
+                slotManagerBuilder.setGetRequiredResourcesSupplier(
+                        () -> Collections.singletonMap(WORKER_RESOURCE_SPEC, 1));
+
+                runTest(
+                        () -> {
+                            // received worker request, verify requesting from driver
+                            CompletableFuture<Boolean> startNewWorkerFuture =
+                                    runInMainThread(
+                                            () ->
+                                                    getResourceManager()
+                                                            .startNewWorker(WORKER_RESOURCE_SPEC));
+                            assertThat(
+                                    startNewWorkerFuture.get(TIMEOUT_SEC, TimeUnit.SECONDS),
+                                    is(true));
+
+                            long t1 =
+                                    requestWorkerFromDriverFutures
+                                            .get(0)
+                                            .get(TIMEOUT_SEC, TimeUnit.SECONDS);
+                            // first request failed, verify requesting another worker from driver
+                            runInMainThread(
+                                    () ->
+                                            resourceIdFutures
+                                                    .get(0)
+                                                    .completeExceptionally(
+                                                            new Throwable("testing error")));
+                            long t2 =
+                                    requestWorkerFromDriverFutures
+                                            .get(1)
+                                            .get(TIMEOUT_SEC, TimeUnit.SECONDS);
+
+                            // validate trying creating worker twice, with proper interval
+                            assertThat(
+                                    (t2 - t1),
+                                    greaterThanOrEqualTo(
+                                            TESTING_START_WORKER_INTERVAL.toMilliseconds()));
+
+                            // second worker registered, verify registration succeed
+                            resourceIdFutures.get(1).complete(tmResourceId);
+                            CompletableFuture<RegistrationResponse> registerTaskExecutorFuture =
+                                    registerTaskExecutor(tmResourceId);
+                            assertThat(
+                                    registerTaskExecutorFuture.get(TIMEOUT_SEC, TimeUnit.SECONDS),
+                                    instanceOf(RegistrationResponse.Success.class));
+                        });
+            }
+        };
+    }
+
     /** Tests workers from previous attempt successfully recovered and registered. */
     @Test
     public void testRecoverWorkerFromPreviousAttempt() throws Exception {
@@ -523,7 +689,7 @@ public class ActiveResourceManagerTest extends TestLogger {
                                     registerTaskExecutor(ResourceID.generate());
                             assertThat(
                                     registerTaskExecutorFuture.get(TIMEOUT_SEC, TimeUnit.SECONDS),
-                                    instanceOf(RegistrationResponse.Decline.class));
+                                    instanceOf(RegistrationResponse.Rejection.class));
                         });
             }
         };
@@ -542,6 +708,121 @@ public class ActiveResourceManagerTest extends TestLogger {
                                             .getErrorFuture()
                                             .get(TIMEOUT_SEC, TimeUnit.SECONDS);
                             assertThat(reportedError, is(fatalError));
+                        });
+            }
+        };
+    }
+
+    @Test
+    public void testWorkerRegistrationTimeout() throws Exception {
+        new Context() {
+            {
+                final ResourceID tmResourceId = ResourceID.generate();
+                final CompletableFuture<ResourceID> releaseResourceFuture =
+                        new CompletableFuture<>();
+
+                flinkConfig.set(
+                        ResourceManagerOptions.TASK_MANAGER_REGISTRATION_TIMEOUT,
+                        Duration.ofMillis(TESTING_START_WORKER_TIMEOUT_MS));
+
+                driverBuilder
+                        .setRequestResourceFunction(
+                                taskExecutorProcessSpec ->
+                                        CompletableFuture.completedFuture(tmResourceId))
+                        .setReleaseResourceConsumer(releaseResourceFuture::complete);
+
+                runTest(
+                        () -> {
+                            // request new worker
+                            runInMainThread(
+                                    () ->
+                                            getResourceManager()
+                                                    .startNewWorker(WORKER_RESOURCE_SPEC));
+
+                            // verify worker is released due to not registered in time
+                            assertThat(
+                                    releaseResourceFuture.get(TIMEOUT_SEC, TimeUnit.SECONDS),
+                                    is(tmResourceId));
+                        });
+            }
+        };
+    }
+
+    @Test
+    public void testWorkerRegistrationTimeoutNotCountingAllocationTime() throws Exception {
+        new Context() {
+            {
+                final ResourceID tmResourceId = ResourceID.generate();
+                final CompletableFuture<ResourceID> requestResourceFuture =
+                        new CompletableFuture<>();
+                final CompletableFuture<ResourceID> releaseResourceFuture =
+                        new CompletableFuture<>();
+
+                flinkConfig.set(
+                        ResourceManagerOptions.TASK_MANAGER_REGISTRATION_TIMEOUT,
+                        Duration.ofMillis(TESTING_START_WORKER_TIMEOUT_MS));
+
+                driverBuilder
+                        .setRequestResourceFunction(
+                                taskExecutorProcessSpec -> requestResourceFuture)
+                        .setReleaseResourceConsumer(releaseResourceFuture::complete);
+
+                runTest(
+                        () -> {
+                            // request new worker
+                            runInMainThread(
+                                    () ->
+                                            getResourceManager()
+                                                    .startNewWorker(WORKER_RESOURCE_SPEC));
+
+                            // resource allocation takes longer than worker registration timeout
+                            try {
+                                Thread.sleep(TESTING_START_WORKER_TIMEOUT_MS * 2);
+                            } catch (InterruptedException e) {
+                                fail();
+                            }
+
+                            runInMainThread(() -> requestResourceFuture.complete(tmResourceId));
+
+                            // worker registered, verify not released due to timeout
+                            CompletableFuture<RegistrationResponse> registerTaskExecutorFuture =
+                                    registerTaskExecutor(tmResourceId);
+                            assertThat(
+                                    registerTaskExecutorFuture.get(TIMEOUT_SEC, TimeUnit.SECONDS),
+                                    instanceOf(RegistrationResponse.Success.class));
+                            assertFalse(releaseResourceFuture.isDone());
+                        });
+            }
+        };
+    }
+
+    @Test
+    public void testWorkerRegistrationTimeoutRecoveredFromPreviousAttempt() throws Exception {
+        new Context() {
+            {
+                final ResourceID tmResourceId = ResourceID.generate();
+                final CompletableFuture<ResourceID> releaseResourceFuture =
+                        new CompletableFuture<>();
+
+                flinkConfig.set(
+                        ResourceManagerOptions.TASK_MANAGER_REGISTRATION_TIMEOUT,
+                        Duration.ofMillis(TESTING_START_WORKER_TIMEOUT_MS));
+
+                driverBuilder.setReleaseResourceConsumer(releaseResourceFuture::complete);
+
+                runTest(
+                        () -> {
+                            // workers recovered
+                            runInMainThread(
+                                    () ->
+                                            getResourceManager()
+                                                    .onPreviousAttemptWorkersRecovered(
+                                                            Collections.singleton(tmResourceId)));
+
+                            // verify worker is released due to not registered in time
+                            assertThat(
+                                    releaseResourceFuture.get(TIMEOUT_SEC, TimeUnit.SECONDS),
+                                    is(tmResourceId));
                         });
             }
         };
@@ -588,6 +869,10 @@ public class ActiveResourceManagerTest extends TestLogger {
             final TestingRpcService rpcService = RPC_SERVICE_RESOURCE.getTestingRpcService();
             final MockResourceManagerRuntimeServices rmServices =
                     new MockResourceManagerRuntimeServices(rpcService, TIMEOUT_TIME, slotManager);
+            final Duration retryInterval =
+                    configuration.get(ResourceManagerOptions.START_WORKER_RETRY_INTERVAL);
+            final Duration workerRegistrationTimeout =
+                    configuration.get(ResourceManagerOptions.TASK_MANAGER_REGISTRATION_TIMEOUT);
 
             final ActiveResourceManager<ResourceID> activeResourceManager =
                     new ActiveResourceManager<>(
@@ -603,6 +888,10 @@ public class ActiveResourceManagerTest extends TestLogger {
                             new ClusterInformation("localhost", 1234),
                             fatalErrorHandler,
                             UnregisteredMetricGroups.createUnregisteredResourceManagerMetricGroup(),
+                            ActiveResourceManagerFactory.createStartWorkerFailureRater(
+                                    configuration),
+                            retryInterval,
+                            workerRegistrationTimeout,
                             ForkJoinPool.commonPool());
 
             activeResourceManager.start();

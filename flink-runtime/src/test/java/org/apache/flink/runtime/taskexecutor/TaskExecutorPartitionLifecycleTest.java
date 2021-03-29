@@ -118,8 +118,8 @@ public class TaskExecutorPartitionLifecycleTest extends TestLogger {
     @Rule public final TemporaryFolder tmp = new TemporaryFolder();
 
     @ClassRule
-    public static final TestExecutorResource TEST_EXECUTOR_SERVICE_RESOURCE =
-            new TestExecutorResource(() -> java.util.concurrent.Executors.newFixedThreadPool(1));
+    public static final TestExecutorResource<?> TEST_EXECUTOR_SERVICE_RESOURCE =
+            new TestExecutorResource<>(() -> java.util.concurrent.Executors.newFixedThreadPool(1));
 
     @Before
     public void setup() {
@@ -428,8 +428,7 @@ public class TaskExecutorPartitionLifecycleTest extends TestLogger {
                         Collections.singletonList(taskResultPartitionDescriptor),
                         Collections.emptyList(),
                         Collections.emptyList(),
-                        Collections.emptyList(),
-                        0);
+                        Collections.emptyList());
 
         final TaskSlotTable<Task> taskSlotTable = createTaskSlotTable();
 
@@ -450,7 +449,7 @@ public class TaskExecutorPartitionLifecycleTest extends TestLogger {
         final TestingJobMasterGateway jobMasterGateway =
                 new TestingJobMasterGatewayBuilder()
                         .setRegisterTaskManagerFunction(
-                                (s, location) ->
+                                (s, location, ignored) ->
                                         CompletableFuture.completedFuture(
                                                 new JMTMRegistrationSuccess(ResourceID.generate())))
                         .setOfferSlotsFunction(
@@ -605,9 +604,7 @@ public class TaskExecutorPartitionLifecycleTest extends TestLogger {
                 null,
                 new BlobCacheService(configuration, new VoidBlobStore(), null),
                 new TestingFatalErrorHandler(),
-                partitionTracker,
-                TaskManagerRunner.createBackPressureSampleService(
-                        configuration, rpc.getScheduledExecutor()));
+                partitionTracker);
     }
 
     private static TaskSlotTable<Task> createTaskSlotTable() {

@@ -50,8 +50,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.apache.flink.connector.hbase2.HBaseValidator.CONNECTOR_PROPERTIES;
 import static org.apache.flink.connector.hbase2.HBaseValidator.CONNECTOR_TABLE_NAME;
 import static org.apache.flink.connector.hbase2.HBaseValidator.CONNECTOR_TYPE_VALUE_HBASE;
+import static org.apache.flink.connector.hbase2.HBaseValidator.CONNECTOR_VERSION_VALUE_223;
 import static org.apache.flink.connector.hbase2.HBaseValidator.CONNECTOR_WRITE_BUFFER_FLUSH_INTERVAL;
 import static org.apache.flink.connector.hbase2.HBaseValidator.CONNECTOR_WRITE_BUFFER_FLUSH_MAX_ROWS;
 import static org.apache.flink.connector.hbase2.HBaseValidator.CONNECTOR_WRITE_BUFFER_FLUSH_MAX_SIZE;
@@ -60,6 +62,7 @@ import static org.apache.flink.connector.hbase2.HBaseValidator.CONNECTOR_ZK_QUOR
 import static org.apache.flink.table.descriptors.ConnectorDescriptorValidator.CONNECTOR_PROPERTY_VERSION;
 import static org.apache.flink.table.descriptors.ConnectorDescriptorValidator.CONNECTOR_TYPE;
 import static org.apache.flink.table.descriptors.ConnectorDescriptorValidator.CONNECTOR_VERSION;
+import static org.apache.flink.table.descriptors.DescriptorProperties.COMMENT;
 import static org.apache.flink.table.descriptors.DescriptorProperties.EXPR;
 import static org.apache.flink.table.descriptors.DescriptorProperties.WATERMARK;
 import static org.apache.flink.table.descriptors.DescriptorProperties.WATERMARK_ROWTIME;
@@ -78,7 +81,7 @@ public class HBase2TableFactory
     @Override
     public StreamTableSource<Row> createStreamTableSource(Map<String, String> properties) {
         final DescriptorProperties descriptorProperties = getValidatedProperties(properties);
-        Configuration hbaseClientConf = getHConf(descriptorProperties);
+        Configuration hbaseClientConf = getHBaseConf(descriptorProperties);
 
         String hTableName = descriptorProperties.getString(CONNECTOR_TABLE_NAME);
         TableSchema tableSchema =
@@ -96,6 +99,8 @@ public class HBase2TableFactory
                 TableSchemaUtils.getPhysicalSchema(descriptorProperties.getTableSchema(SCHEMA));
         HBaseTableSchema hbaseSchema = validateTableSchema(tableSchema);
 
+        Configuration hbaseClientConf = getHBaseConf(descriptorProperties);
+
         HBaseWriteOptions.Builder writeBuilder = HBaseWriteOptions.builder();
         descriptorProperties
                 .getOptionalInt(CONNECTOR_WRITE_BUFFER_FLUSH_MAX_ROWS)
@@ -110,7 +115,7 @@ public class HBase2TableFactory
         return new HBaseUpsertTableSink(
                 descriptorProperties.getString(CONNECTOR_TABLE_NAME),
                 hbaseSchema,
-                getHConf(descriptorProperties),
+                hbaseClientConf,
                 writeBuilder.build());
     }
 
@@ -156,6 +161,7 @@ public class HBase2TableFactory
     public Map<String, String> requiredContext() {
         Map<String, String> context = new HashMap<>();
         context.put(CONNECTOR_TYPE, CONNECTOR_TYPE_VALUE_HBASE); // hbase
+        context.put(CONNECTOR_VERSION, hbaseVersion()); // version
         context.put(CONNECTOR_PROPERTY_VERSION, "1"); // backwards compatibility
         return context;
     }
@@ -188,10 +194,20 @@ public class HBase2TableFactory
         properties.add(SCHEMA + "." + DescriptorProperties.PRIMARY_KEY_NAME);
         properties.add(SCHEMA + "." + DescriptorProperties.PRIMARY_KEY_COLUMNS);
 
+        // comment
+        properties.add(COMMENT);
+
+        // HBase properties
+        properties.add(CONNECTOR_PROPERTIES + ".*");
+
         return properties;
     }
 
-    private Configuration getHConf(DescriptorProperties descriptorProperties) {
+    private String hbaseVersion() {
+        return CONNECTOR_VERSION_VALUE_223;
+    }
+
+    private static Configuration getHBaseConf(DescriptorProperties descriptorProperties) {
         Configuration hbaseClientConf = HBaseConfigurationUtil.createHBaseConf();
         descriptorProperties
                 .getOptionalString(CONNECTOR_ZK_QUORUM)
@@ -200,6 +216,11 @@ public class HBase2TableFactory
         descriptorProperties
                 .getOptionalString(CONNECTOR_ZK_NODE_PARENT)
                 .ifPresent(v -> hbaseClientConf.set(HConstants.ZOOKEEPER_ZNODE_PARENT, v));
+
+        // add HBase properties
+        descriptorProperties
+                .getPropertiesWithPrefix(CONNECTOR_PROPERTIES)
+                .forEach(hbaseClientConf::set);
         return hbaseClientConf;
     }
 }

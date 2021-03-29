@@ -18,8 +18,8 @@
 
 package org.apache.flink.formats.json.maxwell;
 
+import org.apache.flink.formats.common.TimestampFormat;
 import org.apache.flink.formats.json.JsonOptions;
-import org.apache.flink.formats.json.TimestampFormat;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.table.types.logical.RowType;
@@ -135,7 +135,11 @@ public class MaxwellJsonSerDerTest {
 
         MaxwellJsonSerializationSchema serializationSchema =
                 new MaxwellJsonSerializationSchema(
-                        SCHEMA, TimestampFormat.SQL, JsonOptions.MapNullKeyMode.LITERAL, "null");
+                        SCHEMA,
+                        TimestampFormat.SQL,
+                        JsonOptions.MapNullKeyMode.LITERAL,
+                        "null",
+                        true);
         serializationSchema.open(null);
         List<String> result = new ArrayList<>();
         for (RowData rowData : collector.list) {

@@ -798,7 +798,7 @@ public class FutureUtils {
         private final AtomicInteger numCompleted = new AtomicInteger(0);
 
         /** The set of collected results so far. */
-        private volatile T[] results;
+        private final T[] results;
 
         /**
          * The function that is attached to all futures in the conjunction. Once a future is
@@ -808,6 +808,26 @@ public class FutureUtils {
             if (throwable != null) {
                 completeExceptionally(throwable);
             } else {
+                /**
+                 * This {@link #results} update itself is not synchronised in any way and it's fine
+                 * because:
+                 *
+                 * <ul>
+                 *   <li>There is a happens-before relationship for each thread (that is completing
+                 *       the future) between setting {@link #results} and incrementing {@link
+                 *       #numCompleted}.
+                 *   <li>Each thread is updating uniquely different field of the {@link #results}
+                 *       array.
+                 *   <li>There is a happens-before relationship between all of the writing threads
+                 *       and the last one thread (thanks to the {@code
+                 *       numCompleted.incrementAndGet() == numTotal} check.
+                 *   <li>The last thread will be completing the future, so it has transitively
+                 *       happens-before relationship with all of preceding updated/writes to {@link
+                 *       #results}.
+                 *   <li>{@link AtomicInteger#incrementAndGet} is an equivalent of both volatile
+                 *       read & write
+                 * </ul>
+                 */
                 results[index] = value;
 
                 if (numCompleted.incrementAndGet() == numTotal) {
@@ -1323,5 +1343,27 @@ public class FutureUtils {
                 target.complete(value);
             }
         };
+    }
+
+    /**
+     * Switches the execution context of the given source future. This works for normally and
+     * exceptionally completed futures.
+     *
+     * @param source source to switch the execution context for
+     * @param executor executor representing the new execution context
+     * @param <T> type of the source
+     * @return future which is executed by the given executor
+     */
+    public static <T> CompletableFuture<T> switchExecutor(
+            CompletableFuture<? extends T> source, Executor executor) {
+        return source.handleAsync(
+                (t, throwable) -> {
+                    if (throwable != null) {
+                        throw new CompletionException(throwable);
+                    } else {
+                        return t;
+                    }
+                },
+                executor);
     }
 }

@@ -30,6 +30,7 @@ import org.apache.flink.table.catalog.CatalogManager.TableLookupResult;
 import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.catalog.ConnectorCatalogTable;
 import org.apache.flink.table.catalog.ObjectIdentifier;
+import org.apache.flink.table.catalog.ResolvedCatalogBaseTable;
 import org.apache.flink.table.factories.TableFactoryUtil;
 import org.apache.flink.table.factories.TableSourceFactory;
 import org.apache.flink.table.factories.TableSourceFactoryContextImpl;
@@ -105,8 +106,8 @@ public class CatalogSchemaTable extends AbstractTable implements TemporalTable {
         return tableIdentifier;
     }
 
-    public CatalogBaseTable getCatalogTable() {
-        return lookupResult.getTable();
+    public ResolvedCatalogBaseTable<?> getResolvedCatalogTable() {
+        return lookupResult.getResolvedTable();
     }
 
     public boolean isTemporary() {
@@ -120,7 +121,7 @@ public class CatalogSchemaTable extends AbstractTable implements TemporalTable {
     @Override
     public RelDataType getRowType(RelDataTypeFactory typeFactory) {
         final FlinkTypeFactory flinkTypeFactory = (FlinkTypeFactory) typeFactory;
-        TableSchema tableSchema = lookupResult.getResolvedSchema();
+        TableSchema tableSchema = TableSchema.fromResolvedSchema(lookupResult.getResolvedSchema());
         final DataType[] fieldDataTypes = tableSchema.getFieldDataTypes();
         CatalogBaseTable catalogTable = lookupResult.getTable();
         if (!isStreamingMode
