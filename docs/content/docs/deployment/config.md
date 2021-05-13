@@ -80,6 +80,7 @@ You can configure checkpointing directly in code within your Flink job or applic
   - `state.backend`: The state backend to use. This defines the data structure mechanism for taking snapshots. Common values are `filesystem` or `rocksdb`.
   - `state.checkpoints.dir`: The directory to write checkpoints to. This takes a path URI like *s3://mybucket/flink-app/checkpoints* or *hdfs://namenode:port/flink/checkpoints*.
   - `state.savepoints.dir`: The default directory for savepoints. Takes a path URI, similar to `state.checkpoints.dir`.
+  - `execution.checkpointing.interval`: Gets the interval in which checkpoints are periodically scheduled. This setting defines the base interval. Checkpoint triggering may be delayed by the settings execution.checkpointing.max-concurrent-checkpoints and execution.checkpointing.min-pause.
 
 **Web UI**
 
