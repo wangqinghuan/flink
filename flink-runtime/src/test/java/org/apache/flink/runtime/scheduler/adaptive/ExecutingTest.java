@@ -51,6 +51,7 @@ import org.apache.flink.runtime.executiongraph.failover.flip1.partitionrelease.P
 import org.apache.flink.runtime.io.network.partition.JobMasterPartitionTracker;
 import org.apache.flink.runtime.jobgraph.IntermediateResultPartitionID;
 import org.apache.flink.runtime.jobgraph.JobVertex;
+import org.apache.flink.runtime.scheduler.DefaultVertexParallelismInfo;
 import org.apache.flink.runtime.scheduler.ExecutionGraphHandler;
 import org.apache.flink.runtime.scheduler.OperatorCoordinatorHandler;
 import org.apache.flink.runtime.scheduler.strategy.ExecutionVertexID;
@@ -68,6 +69,7 @@ import javax.annotation.Nullable;
 
 import java.time.Duration;
 import java.util.Collections;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
@@ -138,7 +140,7 @@ public class ExecutingTest extends TestLogger {
             ctx.setExpectRestarting(
                     (restartingArguments ->
                             assertThat(restartingArguments.getBackoffTime(), is(duration))));
-            ctx.setHowToHandleFailure((t) -> Executing.FailureResult.canRestart(duration));
+            ctx.setHowToHandleFailure((t) -> Executing.FailureResult.canRestart(t, duration));
             exec.handleGlobalFailure(new RuntimeException("Recoverable error"));
         }
     }
@@ -162,7 +164,8 @@ public class ExecutingTest extends TestLogger {
 
             // transition EG into terminal state, which will notify the Executing state about the
             // failure (async via the supplied executor)
-            exec.getExecutionGraph().failJob(new RuntimeException("test failure"));
+            exec.getExecutionGraph()
+                    .failJob(new RuntimeException("test failure"), System.currentTimeMillis());
         }
     }
 
@@ -231,7 +234,8 @@ public class ExecutingTest extends TestLogger {
                     new ExecutingStateBuilder()
                             .setExecutionGraph(returnsFailedStateExecutionGraph)
                             .build(ctx);
-            ctx.setHowToHandleFailure((ign) -> Executing.FailureResult.canRestart(Duration.ZERO));
+            ctx.setHowToHandleFailure(
+                    (throwable) -> Executing.FailureResult.canRestart(throwable, Duration.ZERO));
             ctx.setExpectRestarting(assertNonNull());
 
             exec.updateTaskExecutionState(createFailingStateTransition());
@@ -694,6 +698,7 @@ public class ExecutingTest extends TestLogger {
                     1,
                     Time.milliseconds(1L),
                     1L,
+                    new DefaultVertexParallelismInfo(1, 1, max -> Optional.empty()),
                     new DefaultSubtaskAttemptNumberStore(Collections.emptyList()));
             mockExecutionVertex = new MockExecutionVertex(this);
         }

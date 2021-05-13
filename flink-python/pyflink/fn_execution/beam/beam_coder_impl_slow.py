@@ -18,7 +18,7 @@
 
 import datetime
 import decimal
-import pickle
+import cloudpickle
 import struct
 from typing import Any, Tuple
 from typing import List
@@ -29,7 +29,7 @@ from apache_beam.coders.coder_impl import StreamCoderImpl, create_InputStream, c
 from pyflink.fn_execution.flink_fn_execution_pb2 import CoderParam
 from pyflink.fn_execution.ResettableIO import ResettableIO
 from pyflink.common import Row, RowKind
-from pyflink.fn_execution.window import TimeWindow, CountWindow
+from pyflink.datastream.window import TimeWindow, CountWindow
 from pyflink.table.utils import pandas_to_arrow, arrow_to_pandas
 
 ROW_KIND_BIT_SIZE = 2
@@ -310,7 +310,7 @@ class PickledBytesCoderImpl(StreamCoderImpl):
         self.field_coder = BinaryCoderImpl()
 
     def encode_to_stream(self, value, out_stream, nested):
-        coded_data = pickle.dumps(value)
+        coded_data = cloudpickle.dumps(value)
         self.field_coder.encode_to_stream(coded_data, out_stream, nested)
 
     def decode_from_stream(self, in_stream, nested):
@@ -318,7 +318,7 @@ class PickledBytesCoderImpl(StreamCoderImpl):
 
     def _decode_one_value_from_stream(self, in_stream: create_InputStream, nested):
         real_data = self.field_coder.decode_from_stream(in_stream, nested)
-        value = pickle.loads(real_data)
+        value = cloudpickle.loads(real_data)
         return value
 
     def __repr__(self) -> str:

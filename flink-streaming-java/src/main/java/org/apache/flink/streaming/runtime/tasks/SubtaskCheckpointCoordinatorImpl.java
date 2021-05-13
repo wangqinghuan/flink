@@ -75,6 +75,8 @@ class SubtaskCheckpointCoordinatorImpl implements SubtaskCheckpointCoordinator {
             LoggerFactory.getLogger(SubtaskCheckpointCoordinatorImpl.class);
     private static final int DEFAULT_MAX_RECORD_ABORTED_CHECKPOINTS = 128;
 
+    private static final int CHECKPOINT_EXECUTION_DELAY_LOG_THRESHOLD_MS = 30_000;
+
     private final CachingCheckpointStorageWorkerView checkpointStorage;
     private final String taskName;
     private final ExecutorService asyncOperationsThreadPool;
@@ -263,6 +265,8 @@ class SubtaskCheckpointCoordinatorImpl implements SubtaskCheckpointCoordinator {
             return;
         }
 
+        logCheckpointProcessingDelay(metadata);
+
         // Step (0): Record the last triggered checkpointId and abort the sync phase of checkpoint
         // if necessary.
         lastCheckpointId = metadata.getCheckpointId();
@@ -274,6 +278,13 @@ class SubtaskCheckpointCoordinatorImpl implements SubtaskCheckpointCoordinator {
                     "Checkpoint {} has been notified as aborted, would not trigger any checkpoint.",
                     metadata.getCheckpointId());
             return;
+        }
+
+        // if checkpoint has been previously unaligned, but was forced to be aligned (pointwise
+        // connection), revert it here so that it can jump over output data
+        if (options.getAlignment() == CheckpointOptions.AlignmentType.FORCED_ALIGNED) {
+            options = options.withUnalignedSupported();
+            initInputsCheckpoint(metadata.getCheckpointId(), options);
         }
 
         // Step (1): Prepare the checkpoint, allow operators to do some pre-barrier work.
@@ -375,7 +386,7 @@ class SubtaskCheckpointCoordinatorImpl implements SubtaskCheckpointCoordinator {
     }
 
     @Override
-    public void initCheckpoint(long id, CheckpointOptions checkpointOptions)
+    public void initInputsCheckpoint(long id, CheckpointOptions checkpointOptions)
             throws CheckpointException {
         if (checkpointOptions.isUnalignedCheckpoint()) {
             channelStateWriter.start(id, checkpointOptions);
@@ -702,6 +713,15 @@ class SubtaskCheckpointCoordinatorImpl implements SubtaskCheckpointCoordinator {
                 LOG.info(ex.getMessage(), ex);
             }
             throw ex;
+        }
+    }
+
+    private static void logCheckpointProcessingDelay(CheckpointMetaData checkpointMetaData) {
+        long delay = System.currentTimeMillis() - checkpointMetaData.getReceiveTimestamp();
+        if (delay >= CHECKPOINT_EXECUTION_DELAY_LOG_THRESHOLD_MS) {
+            LOG.warn(
+                    "Time from receiving all checkpoint barriers/RPC to executing it exceeded threshold: {}ms",
+                    delay);
         }
     }
 }

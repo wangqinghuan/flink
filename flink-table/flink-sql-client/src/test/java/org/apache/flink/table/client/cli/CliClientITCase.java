@@ -36,6 +36,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.jline.reader.MaskingCallback;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.impl.DumbTerminal;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
@@ -112,6 +113,11 @@ public class CliClientITCase extends AbstractTestBase {
         replaceVars.put(
                 "$VAR_JOBMANAGER_RPC_ADDRESS",
                 miniClusterResource.getClientConfiguration().get(ADDRESS));
+    }
+
+    @Before
+    public void before() throws IOException {
+        // initialize new folders for every tests, so the vars can be reused by every SQL scripts
         replaceVars.put("$VAR_STREAMING_PATH", tempFolder.newFolder().toPath().toString());
         replaceVars.put("$VAR_BATCH_PATH", tempFolder.newFolder().toPath().toString());
     }
@@ -150,12 +156,12 @@ public class CliClientITCase extends AbstractTestBase {
         try (Terminal terminal = new DumbTerminal(inputStream, outputStream);
                 CliClient client =
                         new CliClient(
-                                terminal,
+                                () -> terminal,
                                 sessionId,
                                 executor,
                                 historyPath,
                                 HideSqlStatement.INSTANCE)) {
-            client.open();
+            client.executeInInteractiveMode();
             String output = new String(outputStream.toByteArray());
             return normalizeOutput(output);
         }

@@ -53,7 +53,9 @@ import org.apache.flink.sql.parser.dml.SqlBeginStatementSet;
 import org.apache.flink.sql.parser.dml.SqlEndStatementSet;
 import org.apache.flink.sql.parser.dql.SqlLoadModule;
 import org.apache.flink.sql.parser.dql.SqlRichDescribeTable;
+import org.apache.flink.sql.parser.dql.SqlRichExplain;
 import org.apache.flink.sql.parser.dql.SqlShowCatalogs;
+import org.apache.flink.sql.parser.dql.SqlShowCreateTable;
 import org.apache.flink.sql.parser.dql.SqlShowCurrentCatalog;
 import org.apache.flink.sql.parser.dql.SqlShowCurrentDatabase;
 import org.apache.flink.sql.parser.dql.SqlShowDatabases;
@@ -93,6 +95,7 @@ import org.apache.flink.table.operations.ExplainOperation;
 import org.apache.flink.table.operations.LoadModuleOperation;
 import org.apache.flink.table.operations.Operation;
 import org.apache.flink.table.operations.ShowCatalogsOperation;
+import org.apache.flink.table.operations.ShowCreateTableOperation;
 import org.apache.flink.table.operations.ShowCurrentCatalogOperation;
 import org.apache.flink.table.operations.ShowCurrentDatabaseOperation;
 import org.apache.flink.table.operations.ShowDatabasesOperation;
@@ -140,9 +143,6 @@ import org.apache.calcite.rel.RelRoot;
 import org.apache.calcite.rel.hint.HintStrategyTable;
 import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.sql.SqlDialect;
-import org.apache.calcite.sql.SqlExplain;
-import org.apache.calcite.sql.SqlExplainFormat;
-import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
@@ -258,12 +258,14 @@ public class SqlToOperationConverter {
             return Optional.of(converter.convertDropFunction((SqlDropFunction) validated));
         } else if (validated instanceof SqlAlterFunction) {
             return Optional.of(converter.convertAlterFunction((SqlAlterFunction) validated));
+        } else if (validated instanceof SqlShowCreateTable) {
+            return Optional.of(converter.convertShowCreateTable((SqlShowCreateTable) validated));
         } else if (validated instanceof SqlShowFunctions) {
             return Optional.of(converter.convertShowFunctions((SqlShowFunctions) validated));
         } else if (validated instanceof SqlShowPartitions) {
             return Optional.of(converter.convertShowPartitions((SqlShowPartitions) validated));
-        } else if (validated instanceof SqlExplain) {
-            return Optional.of(converter.convertExplain((SqlExplain) validated));
+        } else if (validated instanceof SqlRichExplain) {
+            return Optional.of(converter.convertRichExplain((SqlRichExplain) validated));
         } else if (validated instanceof SqlRichDescribeTable) {
             return Optional.of(converter.convertDescribeTable((SqlRichDescribeTable) validated));
         } else if (validated instanceof RichSqlInsert) {
@@ -383,7 +385,11 @@ public class SqlToOperationConverter {
             SqlTableConstraint constraint =
                     ((SqlAlterTableAddConstraint) sqlAlterTable).getConstraint();
             validateTableConstraint(constraint);
-            TableSchema oriSchema = baseTable.getSchema();
+            TableSchema oriSchema =
+                    TableSchema.fromResolvedSchema(
+                            baseTable
+                                    .getUnresolvedSchema()
+                                    .resolve(catalogManager.getSchemaResolver()));
             // Sanity check for constraint.
             TableSchema.Builder builder = TableSchemaUtils.builderWithGivenSchema(oriSchema);
             if (constraint.getConstraintName().isPresent()) {
@@ -401,7 +407,11 @@ public class SqlToOperationConverter {
             SqlAlterTableDropConstraint dropConstraint =
                     ((SqlAlterTableDropConstraint) sqlAlterTable);
             String constraintName = dropConstraint.getConstraintName().getSimple();
-            TableSchema oriSchema = baseTable.getSchema();
+            TableSchema oriSchema =
+                    TableSchema.fromResolvedSchema(
+                            baseTable
+                                    .getUnresolvedSchema()
+                                    .resolve(catalogManager.getSchemaResolver()));
             if (!oriSchema
                     .getPrimaryKey()
                     .filter(pk -> pk.getName().equals(constraintName))
@@ -775,6 +785,14 @@ public class SqlToOperationConverter {
         return new ShowTablesOperation();
     }
 
+    /** Convert SHOW CREATE TABLE statement. */
+    private Operation convertShowCreateTable(SqlShowCreateTable sqlShowCreateTable) {
+        UnresolvedIdentifier unresolvedIdentifier =
+                UnresolvedIdentifier.of(sqlShowCreateTable.getFullTableName());
+        ObjectIdentifier identifier = catalogManager.qualifyIdentifier(unresolvedIdentifier);
+        return new ShowCreateTableOperation(identifier);
+    }
+
     /** Convert SHOW FUNCTIONS statement. */
     private Operation convertShowFunctions(SqlShowFunctions sqlShowFunctions) {
         return new ShowFunctionsOperation(
@@ -883,16 +901,9 @@ public class SqlToOperationConverter {
         return new ShowViewsOperation();
     }
 
-    /** Convert EXPLAIN statement. */
-    private Operation convertExplain(SqlExplain sqlExplain) {
-        Operation operation = convertSqlQuery(sqlExplain.getExplicandum());
-
-        if (sqlExplain.getDetailLevel() != SqlExplainLevel.EXPPLAN_ATTRIBUTES
-                || sqlExplain.getDepth() != SqlExplain.Depth.PHYSICAL
-                || sqlExplain.getFormat() != SqlExplainFormat.TEXT) {
-            throw new TableException("Only default behavior is supported now, EXPLAIN PLAN FOR xx");
-        }
-
+    /** Convert RICH EXPLAIN statement. */
+    private Operation convertRichExplain(SqlRichExplain sqlExplain) {
+        Operation operation = convertSqlQuery(sqlExplain.getStatement());
         return new ExplainOperation(operation);
     }
 
@@ -944,7 +955,7 @@ public class SqlToOperationConverter {
         if (constraint.isEnforced()) {
             throw new ValidationException(
                     "Flink doesn't support ENFORCED mode for "
-                            + "PRIMARY KEY constaint. ENFORCED/NOT ENFORCED  controls if the constraint "
+                            + "PRIMARY KEY constraint. ENFORCED/NOT ENFORCED  controls if the constraint "
                             + "checks are performed on the incoming/outgoing data. "
                             + "Flink does not own the data therefore the only supported mode "
                             + "is the NOT ENFORCED mode");

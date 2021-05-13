@@ -17,13 +17,16 @@
 
 package org.apache.flink.table.client.cli;
 
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.table.api.TableConfig;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.client.cli.utils.SqlParserHelper;
 import org.apache.flink.table.client.gateway.Executor;
 import org.apache.flink.table.client.gateway.ResultDescriptor;
 import org.apache.flink.table.client.gateway.SqlExecutionException;
 import org.apache.flink.table.client.gateway.TypedResult;
+import org.apache.flink.table.operations.ModifyOperation;
 import org.apache.flink.table.operations.Operation;
 import org.apache.flink.table.operations.QueryOperation;
 import org.apache.flink.types.Row;
@@ -37,6 +40,7 @@ import java.util.Map;
 /** A customizable {@link Executor} for testing purposes. */
 class TestingExecutor implements Executor {
 
+    private static final Configuration defaultConfig = TableConfig.getDefault().getConfiguration();
     private int numCancelCalls = 0;
 
     private int numRetrieveResultChancesCalls = 0;
@@ -97,12 +101,12 @@ class TestingExecutor implements Executor {
 
     @Override
     public Map<String, String> getSessionConfigMap(String sessionId) throws SqlExecutionException {
-        throw new UnsupportedOperationException("Not implemented.");
+        return defaultConfig.toMap();
     }
 
     @Override
     public ReadableConfig getSessionConfig(String sessionId) throws SqlExecutionException {
-        throw new UnsupportedOperationException("Not implemented.");
+        return defaultConfig;
     }
 
     @Override
@@ -128,6 +132,12 @@ class TestingExecutor implements Executor {
 
     @Override
     public TableResult executeOperation(String sessionId, Operation operation)
+            throws SqlExecutionException {
+        throw new UnsupportedOperationException("Not implemented.");
+    }
+
+    @Override
+    public TableResult executeModifyOperations(String sessionId, List<ModifyOperation> operations)
             throws SqlExecutionException {
         throw new UnsupportedOperationException("Not implemented.");
     }

@@ -26,6 +26,7 @@ import org.apache.flink.streaming.api.functions.python.DataStreamPythonFunctionI
 import org.apache.flink.streaming.api.operators.sorted.state.BatchExecutionKeyedStateBackend;
 import org.apache.flink.table.functions.python.PythonAggregateFunctionInfo;
 import org.apache.flink.table.functions.python.PythonFunctionInfo;
+import org.apache.flink.table.functions.python.PythonFunctionKind;
 import org.apache.flink.table.planner.typeutils.DataViewUtils;
 
 import com.google.protobuf.ByteString;
@@ -41,19 +42,6 @@ public enum PythonOperatorUtils {
     ;
 
     private static final byte[] RECORD_SPLITER = new byte[] {0x00};
-
-    /** The Flag for PythonKeyedProcessFunction input data. */
-    public enum KeyedProcessFunctionInputFlag {
-        EVENT_TIME_TIMER((byte) 0),
-        PROC_TIME_TIMER((byte) 1),
-        NORMAL_DATA((byte) 2);
-
-        public final byte value;
-
-        KeyedProcessFunctionInputFlag(byte value) {
-            this.value = value;
-        }
-    }
 
     public static FlinkFnApi.UserDefinedFunction getUserDefinedFunctionProto(
             PythonFunctionInfo pythonFunctionInfo) {
@@ -74,6 +62,9 @@ public enum PythonOperatorUtils {
             builder.addInputs(inputProto);
         }
         builder.setTakesRowAsInput(pythonFunctionInfo.getPythonFunction().takesRowAsInput());
+        builder.setIsPandasUdf(
+                pythonFunctionInfo.getPythonFunction().getPythonFunctionKind()
+                        == PythonFunctionKind.PANDAS);
         return builder.build();
     }
 
@@ -178,6 +169,7 @@ public enum PythonOperatorUtils {
                         dataStreamPythonFunctionInfo
                                 .getPythonFunction()
                                 .getSerializedPythonFunction()));
+        builder.setMetricEnabled(true);
         return builder.build();
     }
 
