@@ -28,6 +28,7 @@ import org.apache.flink.core.memory.ByteArrayOutputStreamWithPos;
 import org.apache.flink.core.memory.DataInputViewStreamWrapper;
 import org.apache.flink.core.memory.DataOutputViewStreamWrapper;
 import org.apache.flink.core.memory.ManagedMemoryUseCase;
+import org.apache.flink.fnexecution.v1.FlinkFnApi;
 import org.apache.flink.python.PythonFunctionRunner;
 import org.apache.flink.streaming.api.functions.python.DataStreamPythonFunctionInfo;
 import org.apache.flink.streaming.api.operators.TimestampedCollector;
@@ -40,7 +41,8 @@ import java.util.Collections;
 import java.util.LinkedList;
 import java.util.Map;
 
-import static org.apache.flink.streaming.api.utils.PythonOperatorUtils.getUserDefinedDataStreamFunctionProto;
+import static org.apache.flink.python.Constants.STATELESS_FUNCTION_URN;
+import static org.apache.flink.streaming.api.utils.ProtoUtils.getUserDefinedDataStreamFunctionProto;
 import static org.apache.flink.streaming.api.utils.PythonOperatorUtils.inBatchExecutionMode;
 import static org.apache.flink.streaming.api.utils.PythonTypeUtils.TypeInfoToSerializerConverter.typeInfoSerializerConverter;
 
@@ -54,22 +56,16 @@ public abstract class TwoInputPythonFunctionOperator<IN1, IN2, RUNNER_OUT, OUT>
 
     private static final long serialVersionUID = 1L;
 
-    private static final String DATASTREAM_STATELESS_FUNCTION_URN =
-            "flink:transform:datastream_stateless_function:v1";
-
     /** The options used to configure the Python worker process. */
     private final Map<String, String> jobOptions;
 
     /** The serialized python function to be executed. */
     private final DataStreamPythonFunctionInfo pythonFunctionInfo;
 
-    /** The coder urn. */
-    private final String coderUrn;
-
     /** The TypeInformation of python worker input data. */
-    private final TypeInformation<Row> runnerInputTypeInfo;
+    protected final TypeInformation<Row> runnerInputTypeInfo;
 
-    private final TypeInformation<RUNNER_OUT> runnerOutputTypeInfo;
+    protected final TypeInformation<RUNNER_OUT> runnerOutputTypeInfo;
 
     /** The TypeSerializer of python worker input data. */
     private final TypeSerializer<Row> runnerInputTypeSerializer;
@@ -85,7 +81,7 @@ public abstract class TwoInputPythonFunctionOperator<IN1, IN2, RUNNER_OUT, OUT>
 
     protected transient DataOutputViewStreamWrapper baosWrapper;
 
-    protected transient TimestampedCollector collector;
+    protected transient TimestampedCollector<OUT> collector;
 
     protected transient Row reuseRow;
 
@@ -93,33 +89,29 @@ public abstract class TwoInputPythonFunctionOperator<IN1, IN2, RUNNER_OUT, OUT>
 
     public TwoInputPythonFunctionOperator(
             Configuration config,
+            TypeInformation<IN1> inputTypeInfo1,
+            TypeInformation<IN2> inputTypeInfo2,
+            TypeInformation<OUT> outputTypeInfo,
+            DataStreamPythonFunctionInfo pythonFunctionInfo) {
+        this(
+                config,
+                pythonFunctionInfo,
+                new RowTypeInfo(Types.BOOLEAN, inputTypeInfo1, inputTypeInfo2),
+                (TypeInformation<RUNNER_OUT>) outputTypeInfo);
+    }
+
+    public TwoInputPythonFunctionOperator(
+            Configuration config,
             DataStreamPythonFunctionInfo pythonFunctionInfo,
-            String coderUrn,
             TypeInformation<Row> runnerInputTypeInfo,
             TypeInformation<RUNNER_OUT> runnerOutputTypeInfo) {
         super(config);
         this.jobOptions = config.toMap();
         this.pythonFunctionInfo = pythonFunctionInfo;
-        this.coderUrn = coderUrn;
         this.runnerInputTypeInfo = runnerInputTypeInfo;
         this.runnerOutputTypeInfo = runnerOutputTypeInfo;
         this.runnerInputTypeSerializer = typeInfoSerializerConverter(runnerInputTypeInfo);
         this.runnerOutputTypeSerializer = typeInfoSerializerConverter(runnerOutputTypeInfo);
-    }
-
-    public TwoInputPythonFunctionOperator(
-            Configuration config,
-            TypeInformation<IN1> inputTypeInfo1,
-            TypeInformation<IN2> inputTypeInfo2,
-            TypeInformation<OUT> outputTypeInfo,
-            DataStreamPythonFunctionInfo pythonFunctionInfo,
-            String coderUrn) {
-        this(
-                config,
-                pythonFunctionInfo,
-                coderUrn,
-                new RowTypeInfo(Types.BOOLEAN, inputTypeInfo1, inputTypeInfo2),
-                (TypeInformation<RUNNER_OUT>) outputTypeInfo);
     }
 
     @Override
@@ -131,7 +123,7 @@ public abstract class TwoInputPythonFunctionOperator<IN1, IN2, RUNNER_OUT, OUT>
 
         bufferedTimestamp = new LinkedList<>();
 
-        collector = new TimestampedCollector(output);
+        collector = new TimestampedCollector<>(output);
         reuseRow = new Row(3);
 
         super.open();
@@ -142,17 +134,15 @@ public abstract class TwoInputPythonFunctionOperator<IN1, IN2, RUNNER_OUT, OUT>
         return new BeamDataStreamPythonFunctionRunner(
                 getRuntimeContext().getTaskName(),
                 createPythonEnvironmentManager(),
-                runnerInputTypeInfo,
-                runnerOutputTypeInfo,
-                DATASTREAM_STATELESS_FUNCTION_URN,
+                STATELESS_FUNCTION_URN,
                 getUserDefinedDataStreamFunctionProto(
                         pythonFunctionInfo,
                         getRuntimeContext(),
-                        Collections.EMPTY_MAP,
+                        Collections.emptyMap(),
                         inBatchExecutionMode(getKeyedStateBackend())),
-                coderUrn,
                 jobOptions,
                 getFlinkMetricContainer(),
+                null,
                 null,
                 null,
                 null,
@@ -167,7 +157,10 @@ public abstract class TwoInputPythonFunctionOperator<IN1, IN2, RUNNER_OUT, OUT>
                                 getContainingTask()
                                         .getEnvironment()
                                         .getUserCodeClassLoader()
-                                        .asClassLoader()));
+                                        .asClassLoader()),
+                createInputCoderInfoDescriptor(runnerInputTypeInfo),
+                createOutputCoderInfoDescriptor(runnerOutputTypeInfo),
+                null);
     }
 
     @Override
@@ -195,20 +188,14 @@ public abstract class TwoInputPythonFunctionOperator<IN1, IN2, RUNNER_OUT, OUT>
         processElementInternal();
     }
 
+    public abstract FlinkFnApi.CoderInfoDescriptor createInputCoderInfoDescriptor(
+            TypeInformation<?> runnerInputType);
+
+    public abstract FlinkFnApi.CoderInfoDescriptor createOutputCoderInfoDescriptor(
+            TypeInformation<?> runnerOutType);
+
     protected Map<String, String> getJobOptions() {
         return jobOptions;
-    }
-
-    protected String getCoderUrn() {
-        return coderUrn;
-    }
-
-    protected TypeInformation<Row> getRunnerInputTypeInfo() {
-        return runnerInputTypeInfo;
-    }
-
-    protected TypeInformation<RUNNER_OUT> getRunnerOutputTypeInfo() {
-        return runnerOutputTypeInfo;
     }
 
     protected DataStreamPythonFunctionInfo getPythonFunctionInfo() {

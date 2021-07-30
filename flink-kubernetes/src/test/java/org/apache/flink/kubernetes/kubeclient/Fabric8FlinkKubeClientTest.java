@@ -35,9 +35,9 @@ import org.apache.flink.kubernetes.kubeclient.factory.KubernetesJobManagerFactor
 import org.apache.flink.kubernetes.kubeclient.parameters.KubernetesJobManagerParameters;
 import org.apache.flink.kubernetes.kubeclient.resources.KubernetesConfigMap;
 import org.apache.flink.kubernetes.kubeclient.resources.KubernetesPod;
-import org.apache.flink.kubernetes.kubeclient.resources.NoOpWatchCallbackHandler;
-import org.apache.flink.runtime.rest.HttpMethodWrapper;
-import org.apache.flink.runtime.util.ExecutorThreadFactory;
+import org.apache.flink.runtime.persistence.PossibleInconsistentStateException;
+import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.concurrent.ExecutorThreadFactory;
 
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.ConfigMapBuilder;
@@ -47,7 +47,6 @@ import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodBuilder;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
-import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.Test;
 
 import java.util.HashMap;
@@ -58,7 +57,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.apache.flink.kubernetes.utils.Constants.CONFIG_FILE_LOG4J_NAME;
@@ -73,7 +71,6 @@ import static org.junit.Assert.fail;
 
 /** Tests for Fabric implementation of {@link FlinkKubeClient}. */
 public class Fabric8FlinkKubeClientTest extends KubernetesClientTestBase {
-    private static final long TIMEOUT = 10 * 1000;
     private static final int RPC_PORT = 7123;
     private static final int BLOB_SERVER_PORT = 8346;
 
@@ -436,6 +433,44 @@ public class Fabric8FlinkKubeClientTest extends KubernetesClientTestBase {
     }
 
     @Test
+    public void testCheckAndUpdateConfigMapWhenGetConfigMapFailed() throws Exception {
+        final int configuredRetries =
+                flinkConfig.getInteger(
+                        KubernetesConfigOptions.KUBERNETES_TRANSACTIONAL_OPERATION_MAX_RETRIES);
+        final KubernetesConfigMap configMap = buildTestingConfigMap();
+        this.flinkKubeClient.createConfigMap(configMap).get();
+
+        mockGetConfigMapFailed(configMap.getInternalResource());
+
+        final int initialRequestCount = server.getRequestCount();
+        try {
+            this.flinkKubeClient
+                    .checkAndUpdateConfigMap(
+                            TESTING_CONFIG_MAP_NAME,
+                            c -> {
+                                throw new AssertionError(
+                                        "The replace operation should have never been triggered.");
+                            })
+                    .get();
+            fail(
+                    "checkAndUpdateConfigMap should fail without a PossibleInconsistentStateException being the cause when number of retries has been exhausted.");
+        } catch (Exception ex) {
+            assertThat(
+                    ex,
+                    FlinkMatchers.containsMessage(
+                            "Could not complete the "
+                                    + "operation. Number of retries has been exhausted."));
+            final int actualRetryCount = server.getRequestCount() - initialRequestCount;
+            assertThat(actualRetryCount, is(configuredRetries + 1));
+            assertThat(
+                    "An error while retrieving the ConfigMap should not cause a PossibleInconsistentStateException.",
+                    ExceptionUtils.findThrowable(ex, PossibleInconsistentStateException.class)
+                            .isPresent(),
+                    is(false));
+        }
+    }
+
+    @Test
     public void testCheckAndUpdateConfigMapWhenReplaceConfigMapFailed() throws Exception {
         final int configuredRetries =
                 flinkConfig.getInteger(
@@ -456,7 +491,7 @@ public class Fabric8FlinkKubeClientTest extends KubernetesClientTestBase {
                             })
                     .get();
             fail(
-                    "CheckAndUpdateConfigMap should fail with exception when number of retries has been exhausted.");
+                    "checkAndUpdateConfigMap should fail due to a PossibleInconsistentStateException when number of retries has been exhausted.");
         } catch (Exception ex) {
             assertThat(
                     ex,
@@ -464,26 +499,13 @@ public class Fabric8FlinkKubeClientTest extends KubernetesClientTestBase {
                             "Could not complete the "
                                     + "operation. Number of retries has been exhausted."));
             assertThat(retries.get(), is(configuredRetries + 1));
+
+            assertThat(
+                    "An error while replacing the ConfigMap should cause an PossibleInconsistentStateException.",
+                    ExceptionUtils.findThrowable(ex, PossibleInconsistentStateException.class)
+                            .isPresent(),
+                    is(true));
         }
-    }
-
-    @Test
-    public void testWatchConfigMaps() throws Exception {
-        final String kubeConfigFile = writeKubeConfigForMockKubernetesServer();
-        flinkConfig.set(KubernetesConfigOptions.KUBE_CONFIG_FILE, kubeConfigFile);
-
-        final FlinkKubeClient realFlinkKubeClient =
-                FlinkKubeClientFactory.getInstance().fromConfiguration(flinkConfig, "testing");
-        realFlinkKubeClient.watchConfigMaps(CLUSTER_ID, new NoOpWatchCallbackHandler<>());
-        final String path =
-                "/api/v1/namespaces/"
-                        + NAMESPACE
-                        + "/configmaps?fieldSelector=metadata.name%3D"
-                        + CLUSTER_ID
-                        + "&watch=true";
-        final RecordedRequest watchRequest = server.takeRequest(TIMEOUT, TimeUnit.MILLISECONDS);
-        assertThat(watchRequest.getPath(), is(path));
-        assertThat(watchRequest.getMethod(), is(HttpMethodWrapper.GET.toString()));
     }
 
     @Test
@@ -504,6 +526,7 @@ public class Fabric8FlinkKubeClientTest extends KubernetesClientTestBase {
                         .withNewMetadata()
                         .withName(TESTING_CONFIG_MAP_NAME)
                         .withLabels(TESTING_LABELS)
+                        .withNamespace(NAMESPACE)
                         .endMetadata()
                         .withData(data)
                         .build());

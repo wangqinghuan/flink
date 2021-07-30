@@ -236,6 +236,16 @@ public class FlinkSqlParserImplTest extends SqlParserTest {
     }
 
     @Test
+    public void testAlterTableReset() {
+        sql("alter table t1 reset ('key1')").ok("ALTER TABLE `T1` RESET (\n  'key1'\n)");
+
+        sql("alter table t1 reset ('key1', 'key2')")
+                .ok("ALTER TABLE `T1` RESET (\n  'key1',\n  'key2'\n)");
+
+        sql("alter table t1 reset()").ok("ALTER TABLE `T1` RESET (\n)");
+    }
+
+    @Test
     public void testCreateTable() {
         final String sql =
                 "CREATE TABLE tbl1 (\n"
@@ -817,6 +827,35 @@ public class FlinkSqlParserImplTest extends SqlParserTest {
     }
 
     @Test
+    public void testCreateTableWithLikeClauseWithoutColumns() {
+        final String sql =
+                ""
+                        + "create TEMPORARY table source_table (\n"
+                        + "   WATERMARK FOR ts AS ts - INTERVAL '5' SECOND\n"
+                        + ") with (\n"
+                        + "  'scan.startup.mode' = 'specific-offsets',\n"
+                        + "  'scan.startup.specific-offsets' = 'partition:0,offset:1169129'\n"
+                        + ") like t_order_course (\n"
+                        + "   OVERWRITING  WATERMARKS\n"
+                        + "   OVERWRITING OPTIONS\n"
+                        + "   EXCLUDING CONSTRAINTS\n"
+                        + ")";
+        final String expected =
+                "CREATE TEMPORARY TABLE `SOURCE_TABLE` (\n"
+                        + "  WATERMARK FOR `TS` AS (`TS` - INTERVAL '5' SECOND)\n"
+                        + ") WITH (\n"
+                        + "  'scan.startup.mode' = 'specific-offsets',\n"
+                        + "  'scan.startup.specific-offsets' = 'partition:0,offset:1169129'\n"
+                        + ")\n"
+                        + "LIKE `T_ORDER_COURSE` (\n"
+                        + "  OVERWRITING WATERMARKS\n"
+                        + "  OVERWRITING OPTIONS\n"
+                        + "  EXCLUDING CONSTRAINTS\n"
+                        + ")";
+        sql(sql).ok(expected);
+    }
+
+    @Test
     public void testCreateTemporaryTable() {
         final String sql =
                 "create temporary table source_table(\n"
@@ -845,6 +884,25 @@ public class FlinkSqlParserImplTest extends SqlParserTest {
                 "create table source_table with (\n" + "  'x' = 'y',\n" + "  'abc' = 'def'\n" + ")";
         final String expected =
                 "CREATE TABLE `SOURCE_TABLE` WITH (\n"
+                        + "  'x' = 'y',\n"
+                        + "  'abc' = 'def'\n"
+                        + ")";
+        sql(sql).ok(expected);
+    }
+
+    @Test
+    public void testCreateTableWithOnlyWaterMark() {
+        final String sql =
+                "create table source_table (\n"
+                        + "  watermark FOR ts AS ts - interval '3' second\n"
+                        + ") with (\n"
+                        + "  'x' = 'y',\n"
+                        + "  'abc' = 'def'\n"
+                        + ")";
+        final String expected =
+                "CREATE TABLE `SOURCE_TABLE` (\n"
+                        + "  WATERMARK FOR `TS` AS (`TS` - INTERVAL '3' SECOND)\n"
+                        + ") WITH (\n"
                         + "  'x' = 'y',\n"
                         + "  'abc' = 'def'\n"
                         + ")";
@@ -1069,6 +1127,13 @@ public class FlinkSqlParserImplTest extends SqlParserTest {
     }
 
     @Test
+    public void testAlterView() {
+        sql("ALTER VIEW v1 RENAME TO v2").ok("ALTER VIEW `V1` RENAME TO `V2`");
+        sql("ALTER VIEW v1 AS SELECT c1, c2 FROM tbl")
+                .ok("ALTER VIEW `V1`\n" + "AS\n" + "SELECT `C1`, `C2`\n" + "FROM `TBL`");
+    }
+
+    @Test
     public void testShowViews() {
         sql("show views").ok("SHOW VIEWS");
     }
@@ -1225,8 +1290,41 @@ public class FlinkSqlParserImplTest extends SqlParserTest {
 
     @Test
     public void testExplain() {
+        String sql = "explain select * from emps";
+        String expected = "EXPLAIN SELECT *\nFROM `EMPS`";
+        this.sql(sql).ok(expected);
+    }
+
+    @Test
+    public void testExplainPlanFor() {
         String sql = "explain plan for select * from emps";
-        String expected = "EXPLAIN SELECT *\n" + "FROM `EMPS`";
+        String expected = "EXPLAIN SELECT *\nFROM `EMPS`";
+        this.sql(sql).ok(expected);
+    }
+
+    @Test
+    public void testExplainChangelogMode() {
+        String sql = "explain changelog_mode select * from emps";
+        String expected = "EXPLAIN CHANGELOG_MODE SELECT *\nFROM `EMPS`";
+        this.sql(sql).ok(expected);
+    }
+
+    @Test
+    public void testExplainEstimatedCost() {
+        String sql = "explain estimated_cost select * from emps";
+        String expected = "EXPLAIN ESTIMATED_COST SELECT *\nFROM `EMPS`";
+        this.sql(sql).ok(expected);
+    }
+
+    @Test
+    public void testExplainUnion() {
+        String sql = "explain estimated_cost select * from emps union all select * from emps";
+        String expected =
+                "EXPLAIN ESTIMATED_COST (SELECT *\n"
+                        + "FROM `EMPS`\n"
+                        + "UNION ALL\n"
+                        + "SELECT *\n"
+                        + "FROM `EMPS`)";
         this.sql(sql).ok(expected);
     }
 
@@ -1256,8 +1354,24 @@ public class FlinkSqlParserImplTest extends SqlParserTest {
     }
 
     @Test
+    public void testSqlOptions() {
+        // SET/RESET are overridden for Flink SQL
+    }
+
+    @Test
     public void testExplainAsJson() {
-        // TODO: FLINK-20562
+        String sql = "explain json_execution_plan select * from emps";
+        String expected = "EXPLAIN JSON_EXECUTION_PLAN SELECT *\n" + "FROM `EMPS`";
+        this.sql(sql).ok(expected);
+    }
+
+    @Test
+    public void testExplainAllDetails() {
+        String sql = "explain changelog_mode,json_execution_plan,estimated_cost select * from emps";
+        String expected =
+                "EXPLAIN JSON_EXECUTION_PLAN, CHANGELOG_MODE, ESTIMATED_COST SELECT *\n"
+                        + "FROM `EMPS`";
+        this.sql(sql).ok(expected);
     }
 
     @Test
@@ -1271,6 +1385,46 @@ public class FlinkSqlParserImplTest extends SqlParserTest {
         String sql = "explain plan for upsert into emps1 values (1, 2)";
         String expected = "EXPLAIN UPSERT INTO `EMPS1`\n" + "VALUES (ROW(1, 2))";
         this.sql(sql).ok(expected);
+    }
+
+    @Test
+    public void testExplainPlanForWithExplainDetails() {
+        String sql = "explain plan for ^json_execution_plan^ upsert into emps1 values (1, 2)";
+        this.sql(sql).fails("Non-query expression encountered in illegal context");
+    }
+
+    @Test
+    public void testExplainDuplicateExplainDetails() {
+        String sql = "explain changelog_mode,^changelog_mode^ select * from emps";
+        this.sql(sql).fails("Duplicate EXPLAIN DETAIL is not allowed.");
+    }
+
+    @Test
+    public void testAddJar() {
+        sql("add Jar './test.sql'").ok("ADD JAR './test.sql'");
+        sql("add JAR 'file:///path/to/\nwhatever'").ok("ADD JAR 'file:///path/to/\nwhatever'");
+        sql("add JAR 'oss://path/helloworld.go'").ok("ADD JAR 'oss://path/helloworld.go'");
+    }
+
+    @Test
+    public void testRemoveJar() {
+        sql("remove Jar './test.sql'").ok("REMOVE JAR './test.sql'");
+        sql("remove JAR 'file:///path/to/\nwhatever'")
+                .ok("REMOVE JAR 'file:///path/to/\nwhatever'");
+        sql("remove JAR 'oss://path/helloworld.go'").ok("REMOVE JAR 'oss://path/helloworld.go'");
+    }
+
+    @Test
+    public void testShowJars() {
+        sql("show jars").ok("SHOW JARS");
+    }
+
+    @Test
+    public void testSetReset() {
+        sql("SET").ok("SET");
+        sql("SET 'test-key' = 'test-value'").ok("SET 'test-key' = 'test-value'");
+        sql("RESET").ok("RESET");
+        sql("RESET 'test-key'").ok("RESET 'test-key'");
     }
 
     public static BaseMatcher<SqlNode> validated(String validatedSql) {

@@ -28,6 +28,7 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.TaskManagerOptions;
 import org.apache.flink.core.fs.FileSystemSafetyNet;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.core.security.FlinkSecurityManager;
 import org.apache.flink.runtime.accumulators.AccumulatorRegistry;
 import org.apache.flink.runtime.blob.PermanentBlobKey;
 import org.apache.flink.runtime.broadcast.BroadcastVariableManager;
@@ -36,7 +37,6 @@ import org.apache.flink.runtime.checkpoint.CheckpointFailureReason;
 import org.apache.flink.runtime.checkpoint.CheckpointMetaData;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
 import org.apache.flink.runtime.clusterframework.types.AllocationID;
-import org.apache.flink.runtime.concurrent.FutureUtils;
 import org.apache.flink.runtime.deployment.InputGateDeploymentDescriptor;
 import org.apache.flink.runtime.deployment.ResultPartitionDeploymentDescriptor;
 import org.apache.flink.runtime.execution.CancelTaskException;
@@ -68,7 +68,6 @@ import org.apache.flink.runtime.metrics.groups.TaskMetricGroup;
 import org.apache.flink.runtime.operators.coordination.OperatorEvent;
 import org.apache.flink.runtime.operators.coordination.TaskNotRunningException;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
-import org.apache.flink.runtime.security.FlinkSecurityManager;
 import org.apache.flink.runtime.shuffle.ShuffleEnvironment;
 import org.apache.flink.runtime.shuffle.ShuffleIOOwnerContext;
 import org.apache.flink.runtime.state.TaskStateManager;
@@ -76,9 +75,10 @@ import org.apache.flink.runtime.taskexecutor.GlobalAggregateManager;
 import org.apache.flink.runtime.taskexecutor.KvStateService;
 import org.apache.flink.runtime.taskexecutor.PartitionProducerStateChecker;
 import org.apache.flink.runtime.taskexecutor.slot.TaskSlotPayload;
-import org.apache.flink.runtime.util.FatalExitExceptionHandler;
+import org.apache.flink.runtime.throughput.ThroughputCalculator;
 import org.apache.flink.types.Either;
 import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.FatalExitExceptionHandler;
 import org.apache.flink.util.FlinkException;
 import org.apache.flink.util.FlinkRuntimeException;
 import org.apache.flink.util.Preconditions;
@@ -86,6 +86,8 @@ import org.apache.flink.util.SerializedValue;
 import org.apache.flink.util.TaskManagerExceptionUtils;
 import org.apache.flink.util.UserCodeClassLoader;
 import org.apache.flink.util.WrappingRuntimeException;
+import org.apache.flink.util.clock.SystemClock;
+import org.apache.flink.util.concurrent.FutureUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -112,6 +114,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import java.util.function.Consumer;
 
+import static org.apache.flink.configuration.TaskManagerOptions.AUTOMATIC_BUFFER_ADJUSTMENT_SAMPLES;
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
@@ -294,6 +297,9 @@ public class Task
      */
     private UserCodeClassLoader userCodeClassLoader;
 
+    /** The only one throughput meter per subtask. */
+    private ThroughputCalculator throughputCalculator;
+
     /**
      * <b>IMPORTANT:</b> This constructor may not start any work that would need to be undone in the
      * case of a failing task deployment.
@@ -417,11 +423,17 @@ public class Task
                         .toArray(new IndexedInputGate[0]);
 
         this.inputGates = new IndexedInputGate[gates.length];
+        this.throughputCalculator =
+                new ThroughputCalculator(
+                        SystemClock.getInstance(),
+                        taskConfiguration.get(AUTOMATIC_BUFFER_ADJUSTMENT_SAMPLES));
         int counter = 0;
         for (IndexedInputGate gate : gates) {
             inputGates[counter++] =
                     new InputGateWithMetrics(
-                            gate, metrics.getIOMetricGroup().getNumBytesInCounter());
+                            gate,
+                            metrics.getIOMetricGroup().getNumBytesInCounter(),
+                            throughputCalculator);
         }
 
         if (shuffleEnvironment instanceof NettyShuffleEnvironment) {
@@ -714,7 +726,8 @@ public class Task
                             taskManagerConfig,
                             metrics,
                             this,
-                            externalResourceInfoProvider);
+                            externalResourceInfoProvider,
+                            throughputCalculator);
 
             // Make sure the user code classloader is accessible thread-locally.
             // We are setting the correct context class loader before instantiating the invokable
@@ -1226,6 +1239,7 @@ public class Task
                         if (taskCancellationTimeout > 0) {
                             Runnable cancelWatchdog =
                                     new TaskCancelerWatchDog(
+                                            taskInfo,
                                             executingThread,
                                             taskManagerActions,
                                             taskCancellationTimeout);
@@ -1658,18 +1672,8 @@ public class Task
                 // log stack trace where the executing thread is stuck and
                 // interrupt the running thread periodically while it is still alive
                 while (task.shouldInterruptOnCancel() && executerThread.isAlive()) {
-                    // build the stack trace of where the thread is stuck, for the log
-                    StackTraceElement[] stack = executerThread.getStackTrace();
-                    StringBuilder bld = new StringBuilder();
-                    for (StackTraceElement e : stack) {
-                        bld.append(e).append('\n');
-                    }
-
-                    log.warn(
-                            "Task '{}' did not react to cancelling signal for {} seconds, but is stuck in method:\n {}",
-                            taskName,
-                            (interruptIntervalMillis / 1000),
-                            bld);
+                    logTaskThreadStackTrace(
+                            executerThread, taskName, interruptIntervalMillis, "interrupting");
 
                     executerThread.interrupt();
                     try {
@@ -1701,11 +1705,17 @@ public class Task
         /** The timeout for cancellation. */
         private final long timeoutMillis;
 
+        private final TaskInfo taskInfo;
+
         TaskCancelerWatchDog(
-                Thread executerThread, TaskManagerActions taskManager, long timeoutMillis) {
+                TaskInfo taskInfo,
+                Thread executerThread,
+                TaskManagerActions taskManager,
+                long timeoutMillis) {
 
             checkArgument(timeoutMillis > 0);
 
+            this.taskInfo = taskInfo;
             this.executerThread = executerThread;
             this.taskManager = taskManager;
             this.timeoutMillis = timeoutMillis;
@@ -1728,6 +1738,11 @@ public class Task
                 }
 
                 if (executerThread.isAlive()) {
+                    logTaskThreadStackTrace(
+                            executerThread,
+                            taskInfo.getTaskNameWithSubtasks(),
+                            timeoutMillis,
+                            "notifying TM");
                     String msg =
                             "Task did not exit gracefully within "
                                     + (timeoutMillis / 1000)
@@ -1738,5 +1753,21 @@ public class Task
                 throw new FlinkRuntimeException("Error in Task Cancellation Watch Dog", t);
             }
         }
+    }
+
+    private static void logTaskThreadStackTrace(
+            Thread thread, String taskName, long timeoutMs, String action) {
+        StackTraceElement[] stack = thread.getStackTrace();
+        StringBuilder stackTraceStr = new StringBuilder();
+        for (StackTraceElement e : stack) {
+            stackTraceStr.append(e).append('\n');
+        }
+
+        LOG.warn(
+                "Task '{}' did not react to cancelling signal - {}; it is stuck for {} seconds in method:\n {}",
+                taskName,
+                action,
+                timeoutMs / 1000,
+                stackTraceStr);
     }
 }

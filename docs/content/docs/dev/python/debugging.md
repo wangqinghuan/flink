@@ -28,13 +28,16 @@ This page describes how to debug in PyFlink.
 
 ## Logging Infos
 
-Python UDFs can log contextual and debug information via standard Python logging modules. 
+Python UDFs can log contextual and debug information via `print` or standard Python logging modules. 
 
 ```python
-@udf(input_types=[DataTypes.BIGINT(), DataTypes.BIGINT()], result_type=DataTypes.BIGINT())
+@udf(result_type=DataTypes.BIGINT())
 def add(i, j):
+    # use logging modules
     import logging
     logging.info("debug")
+    # use print function
+    print('debug')
     return i + j
 ```
 
@@ -71,3 +74,13 @@ You can make use of the [`pydevd_pycharm`](https://pypi.org/project/pydevd-pycha
 4. Start the previously created Python Remote Debug Server
 
 5. Run your Python Code
+
+## Profiling Python UDFs
+
+You can enable the profile to analyze performance bottlenecks.
+
+```python
+t_env.get_config().get_configuration().set_boolean("python.profile.enabled", True)
+``` 
+
+Then you can see the profile result in [logs](#accessing-logs)

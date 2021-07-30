@@ -26,7 +26,7 @@ from pyflink.common.serializer import TypeSerializer
 from pyflink.common.typeinfo import Types
 from pyflink.common.watermark_strategy import WatermarkStrategy, TimestampAssigner
 from pyflink.datastream import TimeCharacteristic, RuntimeContext, WindowAssigner, Trigger, \
-    TriggerResult, CountWindow
+    TriggerResult, CountWindow, SlotSharingGroup
 from pyflink.datastream.data_stream import DataStream
 from pyflink.datastream.functions import CoMapFunction, CoFlatMapFunction, AggregateFunction, \
     ReduceFunction, KeyedCoProcessFunction, WindowFunction, ProcessWindowFunction
@@ -395,7 +395,13 @@ class DataStreamTests(object):
             self.assertEqual(expected, actual)
 
     def test_key_by_map(self):
-        ds = self.env.from_collection([('a', 0), ('b', 0), ('c', 1), ('d', 1), ('e', 2)],
+        from pyflink.util.java_utils import get_j_env_configuration
+        from pyflink.common import Configuration
+        self.env.set_parallelism(1)
+        config = Configuration(
+            j_configuration=get_j_env_configuration(self.env._j_stream_execution_environment))
+        config.set_integer("python.fn-execution.bundle.size", 1)
+        ds = self.env.from_collection([('a', 0), ('b', 1), ('c', 0), ('d', 1), ('e', 2)],
                                       type_info=Types.ROW([Types.STRING(), Types.INT()]))
         keyed_stream = ds.key_by(MyKeySelector(), key_type=Types.INT())
 
@@ -404,7 +410,6 @@ class DataStreamTests(object):
 
         class AssertKeyMapFunction(MapFunction):
             def __init__(self):
-                self.pre = None
                 self.state = None
 
             def open(self, runtime_context: RuntimeContext):
@@ -412,28 +417,37 @@ class DataStreamTests(object):
                     ValueStateDescriptor("test_state", Types.INT()))
 
             def map(self, value):
+                if value[0] == 'a':
+                    pass
+                elif value[0] == 'b':
+                    state_value = self._get_state_value()
+                    assert state_value == 1
+                    self.state.update(state_value)
+                elif value[0] == 'c':
+                    state_value = self._get_state_value()
+                    assert state_value == 1
+                    self.state.update(state_value)
+                elif value[0] == 'd':
+                    state_value = self._get_state_value()
+                    assert state_value == 2
+                    self.state.update(state_value)
+                else:
+                    pass
+                return value
+
+            def _get_state_value(self):
                 state_value = self.state.value()
                 if state_value is None:
                     state_value = 1
                 else:
                     state_value += 1
-                if value[0] == 'b':
-                    assert self.pre == 'a'
-                    assert state_value == 2
-                if value[0] == 'd':
-                    assert self.pre == 'c'
-                    assert state_value == 2
-                if value[0] == 'e':
-                    assert state_value == 1
-                self.pre = value[0]
-                self.state.update(state_value)
-                return value
+                return state_value
 
         keyed_stream.map(AssertKeyMapFunction()).add_sink(self.test_sink)
         self.env.execute('key_by_test')
         results = self.test_sink.get_results(True)
-        expected = ["Row(f0='e', f1=2)", "Row(f0='a', f1=0)", "Row(f0='b', f1=0)",
-                    "Row(f0='c', f1=1)", "Row(f0='d', f1=1)"]
+        expected = ["Row(f0='e', f1=2)", "Row(f0='a', f1=0)", "Row(f0='b', f1=1)",
+                    "Row(f0='c', f1=0)", "Row(f0='d', f1=1)"]
         results.sort()
         expected.sort()
         self.assertEqual(expected, results)
@@ -584,6 +598,27 @@ class DataStreamTests(object):
         ds.map(lambda x: x, output_type=Types.ROW([Types.INT(),
                                                    Types.BASIC_ARRAY(Types.FLOAT()),
                                                    Types.BASIC_ARRAY(Types.STRING())]))\
+            .add_sink(self.test_sink)
+        self.env.execute("test basic array type info")
+        results = self.test_sink.get_results()
+        expected = ['+I[1, [1.1, null, 1.3], [null, hi, flink]]',
+                    '+I[2, [null, 2.2, 2.3], [hello, null, flink]]',
+                    '+I[3, [3.1, 3.2, null], [hello, hi, null]]']
+        results.sort()
+        expected.sort()
+        self.assertEqual(expected, results)
+
+    def test_object_array_type_info(self):
+        ds = self.env.from_collection([(1, [1.1, None, 1.30], [None, 'hi', 'flink']),
+                                       (2, [None, 2.2, 2.3], ['hello', None, 'flink']),
+                                      (3, [3.1, 3.2, None], ['hello', 'hi', None])],
+                                      type_info=Types.ROW([Types.INT(),
+                                                           Types.OBJECT_ARRAY(Types.FLOAT()),
+                                                           Types.OBJECT_ARRAY(Types.STRING())]))
+
+        ds.map(lambda x: x, output_type=Types.ROW([Types.INT(),
+                                                   Types.OBJECT_ARRAY(Types.FLOAT()),
+                                                   Types.OBJECT_ARRAY(Types.STRING())]))\
             .add_sink(self.test_sink)
         self.env.execute("test basic array type info")
         results = self.test_sink.get_results()
@@ -749,7 +784,7 @@ class DataStreamTests(object):
 
             def process_element(self, value, ctx):
                 self.reducing_state.add(value[0])
-                yield Row(self.reducing_state.get(), value[1])
+                yield self.reducing_state.get(), value[1]
 
         data_stream.key_by(lambda x: x[1], key_type=Types.STRING()) \
             .process(MyProcessFunction(), output_type=Types.TUPLE([Types.INT(), Types.STRING()])) \
@@ -793,7 +828,7 @@ class DataStreamTests(object):
 
             def process_element(self, value, ctx):
                 self.aggregating_state.add(value[0])
-                yield Row(self.aggregating_state.get(), value[1])
+                yield self.aggregating_state.get(), value[1]
 
         data_stream.key_by(lambda x: x[1], key_type=Types.STRING()) \
             .process(MyProcessFunction(), output_type=Types.TUPLE([Types.INT(), Types.STRING()])) \
@@ -877,9 +912,9 @@ class StreamingModeDataStreamTests(DataStreamTests, PyFlinkStreamingTestCase):
         ds_2 = self.env.from_collection([4, 5, 6])
         ds_3 = self.env.from_collection([7, 8, 9])
 
-        united_stream = ds_3.union(ds_1, ds_2)
+        unioned_stream = ds_3.union(ds_1, ds_2)
 
-        united_stream.map(lambda x: x + 1).add_sink(self.test_sink)
+        unioned_stream.map(lambda x: x + 1).add_sink(self.test_sink)
         exec_plan = eval(self.env.get_execution_plan())
         source_ids = []
         union_node_pre_ids = []
@@ -893,6 +928,25 @@ class StreamingModeDataStreamTests(DataStreamTests, PyFlinkStreamingTestCase):
         source_ids.sort()
         union_node_pre_ids.sort()
         self.assertEqual(source_ids, union_node_pre_ids)
+
+    def test_keyed_stream_union(self):
+        ds_1 = self.env.from_collection([1, 2, 3])
+        ds_2 = self.env.from_collection([4, 5, 6])
+        unioned_stream = ds_1.key_by(lambda x: x).union(ds_2.key_by(lambda x: x))
+        unioned_stream.add_sink(self.test_sink)
+        exec_plan = eval(self.env.get_execution_plan())
+        expected_union_node_pre_ids = []
+        union_node_pre_ids = []
+        for node in exec_plan['nodes']:
+            if node['type'] == '_keyed_stream_values_operator':
+                expected_union_node_pre_ids.append(node['id'])
+            if node['pact'] == 'Data Sink':
+                for pre in node['predecessors']:
+                    union_node_pre_ids.append(pre['id'])
+
+        expected_union_node_pre_ids.sort()
+        union_node_pre_ids.sort()
+        self.assertEqual(expected_union_node_pre_ids, union_node_pre_ids)
 
     def test_project(self):
         ds = self.env.from_collection([[1, 2, 3, 4], [5, 6, 7, 8]],
@@ -981,8 +1035,9 @@ class StreamingModeDataStreamTests(DataStreamTests, PyFlinkStreamingTestCase):
         slot_sharing_group_1 = 'slot_sharing_group_1'
         slot_sharing_group_2 = 'slot_sharing_group_2'
         ds_1 = self.env.from_collection([1, 2, 3]).name(source_operator_name)
-        ds_1.slot_sharing_group(slot_sharing_group_1).map(lambda x: x + 1).set_parallelism(3)\
-            .name(map_operator_name).slot_sharing_group(slot_sharing_group_2)\
+        ds_1.slot_sharing_group(SlotSharingGroup.builder(slot_sharing_group_1).build()) \
+            .map(lambda x: x + 1).set_parallelism(3) \
+            .name(map_operator_name).slot_sharing_group(slot_sharing_group_2) \
             .add_sink(self.test_sink)
 
         j_generated_stream_graph = self.env._j_stream_execution_environment \

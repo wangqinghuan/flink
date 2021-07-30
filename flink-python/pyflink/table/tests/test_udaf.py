@@ -29,7 +29,7 @@ from pyflink.table.data_view import ListView, MapView
 from pyflink.table.expressions import col
 from pyflink.table.udf import AggregateFunction, udaf
 from pyflink.table.window import Tumble, Slide, Session
-from pyflink.testing.test_case_utils import PyFlinkBlinkStreamTableTestCase
+from pyflink.testing.test_case_utils import PyFlinkStreamTableTestCase
 
 
 class CountAggregateFunction(AggregateFunction):
@@ -239,7 +239,7 @@ class TestIterateAggregateFunction(AggregateFunction):
             DataTypes.FIELD("f3", DataTypes.BIGINT())])
 
 
-class StreamTableAggregateTests(PyFlinkBlinkStreamTableTestCase):
+class StreamTableAggregateTests(PyFlinkStreamTableTestCase):
 
     def test_double_aggregate(self):
         self.t_env.register_function("my_count", CountAggregateFunction())
@@ -543,24 +543,25 @@ class StreamTableAggregateTests(PyFlinkBlinkStreamTableTestCase):
 
         from pyflink.testing import source_sink_utils
         table_sink = source_sink_utils.TestAppendSink(
-            ['a', 'b', 'c', 'd'],
+            ['a', 'b', 'c', 'd', 'e'],
             [
                 DataTypes.TINYINT(),
                 DataTypes.TIMESTAMP(3),
                 DataTypes.TIMESTAMP(3),
+                DataTypes.BIGINT(),
                 DataTypes.BIGINT()])
         self.t_env.register_table_sink("Results", table_sink)
         t.window(Tumble.over("1.hours").on("rowtime").alias("w")) \
             .group_by("a, w") \
-            .select("a, w.start, w.end, my_count(c) as c") \
+            .select("a, w.start, w.end, COUNT(c) as c, my_count(c) as d") \
             .execute_insert("Results") \
             .wait()
         actual = source_sink_utils.results()
         self.assert_equals(actual,
-                           ["+I[2, 2018-03-11 03:00:00.0, 2018-03-11 04:00:00.0, 1]",
-                            "+I[3, 2018-03-11 03:00:00.0, 2018-03-11 04:00:00.0, 1]",
-                            "+I[1, 2018-03-11 03:00:00.0, 2018-03-11 04:00:00.0, 2]",
-                            "+I[1, 2018-03-11 04:00:00.0, 2018-03-11 05:00:00.0, 1]"])
+                           ["+I[2, 2018-03-11 03:00:00.0, 2018-03-11 04:00:00.0, 2, 1]",
+                            "+I[3, 2018-03-11 03:00:00.0, 2018-03-11 04:00:00.0, 1, 1]",
+                            "+I[1, 2018-03-11 03:00:00.0, 2018-03-11 04:00:00.0, 2, 2]",
+                            "+I[1, 2018-03-11 04:00:00.0, 2018-03-11 05:00:00.0, 1, 1]"])
 
     def test_tumbling_group_window_over_count(self):
         self.t_env.get_config().get_configuration().set_string("parallelism.default", "1")
@@ -784,6 +785,111 @@ class StreamTableAggregateTests(PyFlinkBlinkStreamTableTestCase):
                             "+I[2, 2018-03-11 03:10:00.0, 2018-03-11 04:00:00.0, 2]",
                             "+I[1, 2018-03-11 03:10:00.0, 2018-03-11 04:10:00.0, 2]",
                             "+I[1, 2018-03-11 04:20:00.0, 2018-03-11 04:50:00.0, 1]"])
+
+    def test_execute_group_aggregate_from_json_plan(self):
+        # create source file path
+        tmp_dir = self.tempdir
+        data = ['1,1', '3,2', '1,3']
+        source_path = tmp_dir + '/test_execute_group_aggregate_from_json_plan.csv'
+        with open(source_path, 'w') as fd:
+            for ele in data:
+                fd.write(ele + '\n')
+
+        source_table = """
+            CREATE TABLE source_table (
+                a BIGINT,
+                b BIGINT
+            ) WITH (
+                'connector' = 'filesystem',
+                'path' = '%s',
+                'format' = 'csv'
+            )
+        """ % source_path
+        self.t_env.execute_sql(source_table)
+
+        self.t_env.execute_sql("""
+            CREATE TABLE sink_table (
+                a BIGINT,
+                b BIGINT
+            ) WITH (
+                'connector' = 'blackhole'
+            )
+        """)
+
+        self.t_env.create_temporary_function("my_sum", SumAggregateFunction())
+
+        json_plan = self.t_env._j_tenv.getJsonPlan("INSERT INTO sink_table "
+                                                   "SELECT a, my_sum(b) FROM source_table "
+                                                   "GROUP BY a")
+        from py4j.java_gateway import get_method
+        get_method(self.t_env._j_tenv.executeJsonPlan(json_plan), "await")()
+
+    def test_execute_group_window_aggregate_from_json_plan(self):
+        # create source file path
+        tmp_dir = self.tempdir
+        data = [
+            '1,1,2,2018-03-11 03:10:00',
+            '3,3,2,2018-03-11 03:10:00',
+            '2,2,1,2018-03-11 03:10:00',
+            '1,1,3,2018-03-11 03:40:00',
+            '1,1,8,2018-03-11 04:20:00',
+            '2,2,3,2018-03-11 03:30:00'
+        ]
+        source_path = tmp_dir + '/test_execute_group_window_aggregate_from_json_plan.csv'
+        sink_path = tmp_dir + '/test_execute_group_window_aggregate_from_json_plan'
+        with open(source_path, 'w') as fd:
+            for ele in data:
+                fd.write(ele + '\n')
+
+        source_table = """
+            CREATE TABLE source_table (
+                a TINYINT,
+                b SMALLINT,
+                c SMALLINT,
+                rowtime TIMESTAMP(3),
+                WATERMARK FOR rowtime AS rowtime - INTERVAL '60' MINUTE
+            ) WITH (
+                'connector' = 'filesystem',
+                'path' = '%s',
+                'format' = 'csv'
+            )
+        """ % source_path
+        self.t_env.execute_sql(source_table)
+
+        self.t_env.execute_sql("""
+            CREATE TABLE sink_table (
+                a BIGINT,
+                w_start TIMESTAMP(3),
+                w_end TIMESTAMP(3),
+                b BIGINT
+            ) WITH (
+                'connector' = 'filesystem',
+                'path' = '%s',
+                'format' = 'csv'
+            )
+        """ % sink_path)
+
+        self.t_env.create_temporary_function("my_count", CountAggregateFunction())
+
+        json_plan = self.t_env._j_tenv.getJsonPlan("INSERT INTO sink_table "
+                                                   "SELECT a, "
+                                                   "SESSION_START(rowtime, INTERVAL '30' MINUTE), "
+                                                   "SESSION_END(rowtime, INTERVAL '30' MINUTE), "
+                                                   "my_count(c) "
+                                                   "FROM source_table "
+                                                   "GROUP BY "
+                                                   "a, b, SESSION(rowtime, INTERVAL '30' MINUTE)")
+        from py4j.java_gateway import get_method
+        get_method(self.t_env._j_tenv.executeJsonPlan(json_plan), "await")()
+
+        import glob
+        lines = [line.strip() for file in glob.glob(sink_path + '/*') for line in open(file, 'r')]
+        lines.sort()
+        self.assertEqual(lines,
+                         ['1,"2018-03-11 03:10:00","2018-03-11 04:10:00",2',
+                          '1,"2018-03-11 04:20:00","2018-03-11 04:50:00",1',
+                          '2,"2018-03-11 03:10:00","2018-03-11 04:00:00",2',
+                          '3,"2018-03-11 03:10:00","2018-03-11 03:40:00",1'])
 
 
 if __name__ == '__main__':

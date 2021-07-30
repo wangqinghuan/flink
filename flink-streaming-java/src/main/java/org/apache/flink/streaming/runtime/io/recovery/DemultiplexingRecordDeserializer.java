@@ -30,7 +30,7 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.streamstatus.StreamStatus;
 import org.apache.flink.util.CloseableIterator;
 
-import org.apache.flink.shaded.guava18.com.google.common.collect.Maps;
+import org.apache.flink.shaded.guava30.com.google.common.collect.Maps;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -197,7 +197,8 @@ class DemultiplexingRecordDeserializer<T>
             Function<Integer, RecordDeserializer<DeserializationDelegate<StreamElement>>>
                     deserializerFactory,
             Function<InputChannelInfo, Predicate<StreamRecord<T>>> recordFilterFactory) {
-        int[] oldSubtaskIndexes = rescalingDescriptor.getOldSubtaskIndexes();
+        int[] oldSubtaskIndexes =
+                rescalingDescriptor.getOldSubtaskIndexes(channelInfo.getGateIdx());
         if (oldSubtaskIndexes.length == 0) {
             return UNMAPPED;
         }
@@ -219,7 +220,7 @@ class DemultiplexingRecordDeserializer<T>
                         descriptor,
                         new VirtualChannel<>(
                                 deserializerFactory.apply(totalChannels),
-                                rescalingDescriptor.isAmbiguous(subtask)
+                                rescalingDescriptor.isAmbiguous(channelInfo.getGateIdx(), subtask)
                                         ? recordFilterFactory.apply(channelInfo)
                                         : RecordFilter.all()));
             }

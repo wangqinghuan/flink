@@ -21,6 +21,7 @@ import warnings
 from typing import Callable, Union, List, cast
 
 from pyflink.common import typeinfo, ExecutionConfig, Row
+from pyflink.datastream.slot_sharing_group import SlotSharingGroup
 from pyflink.datastream.window import TimeWindowSerializer, CountWindowSerializer, WindowAssigner, \
     Trigger, WindowOperationDescriptor
 from pyflink.common.typeinfo import RowTypeInfo, Types, TypeInformation, _from_java_type
@@ -36,6 +37,9 @@ from pyflink.datastream.functions import _get_python_env, FlatMapFunctionWrapper
 from pyflink.datastream.state import ValueStateDescriptor, ValueState, ListStateDescriptor
 from pyflink.datastream.utils import convert_to_python_obj
 from pyflink.java_gateway import get_gateway
+
+
+__all__ = ['CloseableIterator']
 
 
 class DataStream(object):
@@ -204,7 +208,7 @@ class DataStream(object):
         self._j_data_stream.disableChaining()
         return self
 
-    def slot_sharing_group(self, slot_sharing_group: str) -> 'DataStream':
+    def slot_sharing_group(self, slot_sharing_group: Union[str, SlotSharingGroup]) -> 'DataStream':
         """
         Sets the slot sharing group of this operation. Parallel instances of operations that are in
         the same slot sharing group will be co-located in the same TaskManager slot, if possible.
@@ -215,10 +219,14 @@ class DataStream(object):
         Initially an operation is in the default slot sharing group. An operation can be put into
         the default group explicitly by setting the slot sharing group to 'default'.
 
-        :param slot_sharing_group: The slot sharing group name.
+        :param slot_sharing_group: The slot sharing group name or which contains name and its
+                        resource spec.
         :return: This operator.
         """
-        self._j_data_stream.slotSharingGroup(slot_sharing_group)
+        if isinstance(slot_sharing_group, SlotSharingGroup):
+            self._j_data_stream.slotSharingGroup(slot_sharing_group.get_java_slot_sharing_group())
+        else:
+            self._j_data_stream.slotSharingGroup(slot_sharing_group)
         return self
 
     def map(self, func: Union[Callable, MapFunction], output_type: TypeInformation = None) \
@@ -368,7 +376,10 @@ class DataStream(object):
         """
         j_data_streams = []
         for data_stream in streams:
-            j_data_streams.append(data_stream._j_data_stream)
+            if isinstance(data_stream, KeyedStream):
+                j_data_streams.append(data_stream._values()._j_data_stream)
+            else:
+                j_data_streams.append(data_stream._j_data_stream)
         gateway = get_gateway()
         JDataStream = gateway.jvm.org.apache.flink.streaming.api.datastream.DataStream
         j_data_stream_arr = get_gateway().new_array(JDataStream, len(j_data_streams))
@@ -778,7 +789,8 @@ class DataStreamSink(object):
         self._j_data_stream_sink.disableChaining()
         return self
 
-    def slot_sharing_group(self, slot_sharing_group: str) -> 'DataStreamSink':
+    def slot_sharing_group(self, slot_sharing_group: Union[str, SlotSharingGroup]) \
+            -> 'DataStreamSink':
         """
         Sets the slot sharing group of this operation. Parallel instances of operations that are in
         the same slot sharing group will be co-located in the same TaskManager slot, if possible.
@@ -789,10 +801,15 @@ class DataStreamSink(object):
         Initially an operation is in the default slot sharing group. An operation can be put into
         the default group explicitly by setting the slot sharing group to 'default'.
 
-        :param slot_sharing_group: The slot sharing group name.
+        :param slot_sharing_group: The slot sharing group name or which contains name and its
+                        resource spec.
         :return: This operator.
         """
-        self._j_data_stream_sink.slotSharingGroup(slot_sharing_group)
+        if isinstance(slot_sharing_group, SlotSharingGroup):
+            self._j_data_stream_sink.slotSharingGroup(
+                slot_sharing_group.get_java_slot_sharing_group())
+        else:
+            self._j_data_stream_sink.slotSharingGroup(slot_sharing_group)
         return self
 
 
@@ -1102,7 +1119,7 @@ class KeyedStream(DataStream):
     def disable_chaining(self) -> 'DataStream':
         raise Exception("Disable chaining for KeyedStream is not supported.")
 
-    def slot_sharing_group(self, slot_sharing_group: str) -> 'DataStream':
+    def slot_sharing_group(self, slot_sharing_group: Union[str, SlotSharingGroup]) -> 'DataStream':
         raise Exception("Setting slot sharing group for KeyedStream is not supported.")
 
 
@@ -1130,7 +1147,7 @@ class WindowedStream(object):
         return self._keyed_stream.get_execution_environment()
 
     def get_input_type(self):
-        return self._keyed_stream.get_type()
+        return _from_java_type(self._keyed_stream._original_data_type_info.get_java_type_info())
 
     def trigger(self, trigger: Trigger):
         """

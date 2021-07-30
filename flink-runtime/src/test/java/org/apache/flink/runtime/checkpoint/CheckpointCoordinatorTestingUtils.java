@@ -25,9 +25,7 @@ import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.runtime.OperatorIDPair;
 import org.apache.flink.runtime.concurrent.ComponentMainThreadExecutor;
 import org.apache.flink.runtime.concurrent.ComponentMainThreadExecutorServiceAdapter;
-import org.apache.flink.runtime.concurrent.Executors;
 import org.apache.flink.runtime.concurrent.ManuallyTriggeredScheduledExecutor;
-import org.apache.flink.runtime.concurrent.ScheduledExecutor;
 import org.apache.flink.runtime.execution.ExecutionState;
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.executiongraph.ExecutionGraph;
@@ -45,6 +43,7 @@ import org.apache.flink.runtime.jobgraph.tasks.CheckpointCoordinatorConfiguratio
 import org.apache.flink.runtime.jobmanager.slots.TaskManagerGateway;
 import org.apache.flink.runtime.jobmaster.LogicalSlot;
 import org.apache.flink.runtime.jobmaster.TestingLogicalSlotBuilder;
+import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.state.ChainedStateHandle;
 import org.apache.flink.runtime.state.CheckpointStorage;
 import org.apache.flink.runtime.state.KeyGroupRange;
@@ -61,6 +60,8 @@ import org.apache.flink.runtime.testtasks.NoOpInvokable;
 import org.apache.flink.runtime.testutils.CommonTestUtils;
 import org.apache.flink.util.InstantiationUtil;
 import org.apache.flink.util.Preconditions;
+import org.apache.flink.util.concurrent.Executors;
+import org.apache.flink.util.concurrent.ScheduledExecutor;
 
 import org.junit.Assert;
 
@@ -452,7 +453,7 @@ public class CheckpointCoordinatorTestingUtils {
                 new HashMap<>();
 
         @Override
-        public void triggerCheckpoint(
+        public CompletableFuture<Acknowledge> triggerCheckpoint(
                 ExecutionAttemptID attemptId,
                 JobID jobId,
                 long checkpointId,
@@ -463,6 +464,7 @@ public class CheckpointCoordinatorTestingUtils {
                     .add(
                             new TriggeredCheckpoint(
                                     jobId, checkpointId, timestamp, checkpointOptions));
+            return CompletableFuture.completedFuture(Acknowledge.get());
         }
 
         @Override
@@ -695,6 +697,12 @@ public class CheckpointCoordinatorTestingUtils {
             return this;
         }
 
+        public CheckpointCoordinatorBuilder setCheckpointsCleaner(
+                CheckpointsCleaner checkpointsCleaner) {
+            this.checkpointsCleaner = checkpointsCleaner;
+            return this;
+        }
+
         public CheckpointCoordinatorBuilder setCheckpointIDCounter(
                 CheckpointIDCounter checkpointIDCounter) {
             this.checkpointIDCounter = checkpointIDCounter;
@@ -758,9 +766,8 @@ public class CheckpointCoordinatorTestingUtils {
                     new DefaultCheckpointPlanCalculator(
                             executionGraph.getJobID(),
                             new ExecutionGraphCheckpointPlanCalculatorContext(executionGraph),
-                            executionGraph.getVerticesTopologically());
-            checkpointPlanCalculator.setAllowCheckpointsAfterTasksFinished(
-                    allowCheckpointsAfterTasksFinished);
+                            executionGraph.getVerticesTopologically(),
+                            allowCheckpointsAfterTasksFinished);
 
             return new CheckpointCoordinator(
                     executionGraph.getJobID(),

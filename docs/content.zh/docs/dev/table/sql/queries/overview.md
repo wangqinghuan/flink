@@ -246,9 +246,10 @@ The following BNF-grammar describes the superset of supported SQL features in ba
 {{< expand Grammar >}}
 ```sql
 query:
-  values
+    values
+  | WITH withItem [ , withItem ]* query
   | {
-      select
+        select
       | selectWithoutFrom
       | query UNION [ ALL ] query
       | query EXCEPT query
@@ -259,64 +260,70 @@ query:
     [ OFFSET start { ROW | ROWS } ]
     [ FETCH { FIRST | NEXT } [ count ] { ROW | ROWS } ONLY]
 
+withItem:
+    name
+    [ '(' column [, column ]* ')' ]
+    AS '(' query ')'
+
 orderItem:
-  expression [ ASC | DESC ]
+    expression [ ASC | DESC ]
 
 select:
-  SELECT [ ALL | DISTINCT ]
-  { * | projectItem [, projectItem ]* }
-  FROM tableExpression
-  [ WHERE booleanExpression ]
-  [ GROUP BY { groupItem [, groupItem ]* } ]
-  [ HAVING booleanExpression ]
-  [ WINDOW windowName AS windowSpec [, windowName AS windowSpec ]* ]
+    SELECT [ ALL | DISTINCT ]
+    { * | projectItem [, projectItem ]* }
+    FROM tableExpression
+    [ WHERE booleanExpression ]
+    [ GROUP BY { groupItem [, groupItem ]* } ]
+    [ HAVING booleanExpression ]
+    [ WINDOW windowName AS windowSpec [, windowName AS windowSpec ]* ]
 
 selectWithoutFrom:
-  SELECT [ ALL | DISTINCT ]
-  { * | projectItem [, projectItem ]* }
+    SELECT [ ALL | DISTINCT ]
+    { * | projectItem [, projectItem ]* }
 
 projectItem:
-  expression [ [ AS ] columnAlias ]
+    expression [ [ AS ] columnAlias ]
   | tableAlias . *
 
 tableExpression:
-  tableReference [, tableReference ]*
+    tableReference [, tableReference ]*
   | tableExpression [ NATURAL ] [ LEFT | RIGHT | FULL ] JOIN tableExpression [ joinCondition ]
 
 joinCondition:
-  ON booleanExpression
+    ON booleanExpression
   | USING '(' column [, column ]* ')'
 
 tableReference:
-  tablePrimary
-  [ matchRecognize ]
-  [ [ AS ] alias [ '(' columnAlias [, columnAlias ]* ')' ] ]
+    tablePrimary
+    [ matchRecognize ]
+    [ [ AS ] alias [ '(' columnAlias [, columnAlias ]* ')' ] ]
 
 tablePrimary:
-  [ TABLE ] tablePath [ dynamicTableOptions ] [systemTimePeriod] [[AS] correlationName]
+    [ TABLE ] tablePath [ dynamicTableOptions ] [systemTimePeriod] [[AS] correlationName]
   | LATERAL TABLE '(' functionName '(' expression [, expression ]* ')' ')'
+  | [ LATERAL ] '(' query ')'
   | UNNEST '(' expression ')'
 
 tablePath:
-  [ [ catalogName . ] schemaName . ] tableName
+    [ [ catalogName . ] databaseName . ] tableName
 
 systemTimePeriod:
-  FOR SYSTEM_TIME AS OF dateTimeExpression
+    FOR SYSTEM_TIME AS OF dateTimeExpression
 
 dynamicTableOptions:
-  /*+ OPTIONS(key=val [, key=val]*) */
+    /*+ OPTIONS(key=val [, key=val]*) */
 
 key:
-  stringLiteral
+    stringLiteral
 
 val:
-  stringLiteral
+    stringLiteral
 
 values:
-  VALUES expression [, expression ]*
+    VALUES expression [, expression ]*
 
 groupItem:
-  expression
+    expression
   | '(' ')'
   | '(' expression [, expression ]* ')'
   | CUBE '(' expression [, expression ]* ')'
@@ -339,45 +346,44 @@ windowSpec:
     ')'
 
 matchRecognize:
-      MATCH_RECOGNIZE '('
-      [ PARTITION BY expression [, expression ]* ]
-      [ ORDER BY orderItem [, orderItem ]* ]
-      [ MEASURES measureColumn [, measureColumn ]* ]
-      [ ONE ROW PER MATCH ]
-      [ AFTER MATCH
-            ( SKIP TO NEXT ROW
-            | SKIP PAST LAST ROW
-            | SKIP TO FIRST variable
-            | SKIP TO LAST variable
-            | SKIP TO variable )
-      ]
-      PATTERN '(' pattern ')'
-      [ WITHIN intervalLiteral ]
-      DEFINE variable AS condition [, variable AS condition ]*
-      ')'
+    MATCH_RECOGNIZE '('
+    [ PARTITION BY expression [, expression ]* ]
+    [ ORDER BY orderItem [, orderItem ]* ]
+    [ MEASURES measureColumn [, measureColumn ]* ]
+    [ ONE ROW PER MATCH ]
+    [ AFTER MATCH
+      ( SKIP TO NEXT ROW
+      | SKIP PAST LAST ROW
+      | SKIP TO FIRST variable
+      | SKIP TO LAST variable
+      | SKIP TO variable )
+    ]
+    PATTERN '(' pattern ')'
+    [ WITHIN intervalLiteral ]
+    DEFINE variable AS condition [, variable AS condition ]*
+    ')'
 
 measureColumn:
-      expression AS alias
+    expression AS alias
 
 pattern:
-      patternTerm [ '|' patternTerm ]*
+    patternTerm [ '|' patternTerm ]*
 
 patternTerm:
-      patternFactor [ patternFactor ]*
+    patternFactor [ patternFactor ]*
 
 patternFactor:
-      variable [ patternQuantifier ]
+    variable [ patternQuantifier ]
 
 patternQuantifier:
-      '*'
-  |   '*?'
-  |   '+'
-  |   '+?'
-  |   '?'
-  |   '??'
-  |   '{' { [ minRepeat ], [ maxRepeat ] } '}' ['?']
-  |   '{' repeat '}'
-
+    '*'
+  | '*?'
+  | '+'
+  | '+?'
+  | '?'
+  | '??'
+  | '{' { [ minRepeat ], [ maxRepeat ] } '}' ['?']
+  | '{' repeat '}'
 ```
 {{< /expand >}}
 
@@ -387,7 +393,19 @@ Flink SQL uses a lexical policy for identifier (table, attribute, function names
 - After which, identifiers are matched case-sensitively.
 - Unlike Java, back-ticks allow identifiers to contain non-alphanumeric characters (e.g. <code>"SELECT a AS `my field` FROM t"</code>).
 
-String literals must be enclosed in single quotes (e.g., `SELECT 'Hello World'`). Duplicate a single quote for escaping (e.g., `SELECT 'It''s me.'`). Unicode characters are supported in string literals. If explicit unicode code points are required, use the following syntax:
+String literals must be enclosed in single quotes (e.g., `SELECT 'Hello World'`). Duplicate a single quote for escaping (e.g., `SELECT 'It''s me'`).
+
+```text
+Flink SQL> SELECT 'Hello World', 'It''s me';
++-------------+---------+
+|      EXPR$0 |  EXPR$1 |
++-------------+---------+
+| Hello World | It's me |
++-------------+---------+
+1 row in set
+```
+
+Unicode characters are supported in string literals. If explicit unicode code points are required, use the following syntax:
 
 - Use the backslash (`\`) as escaping character (default): `SELECT U&'\263A'`
 - Use a custom escaping character: `SELECT U&'#263A' UESCAPE '#'`

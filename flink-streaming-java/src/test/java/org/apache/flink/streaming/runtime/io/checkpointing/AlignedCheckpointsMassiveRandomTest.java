@@ -27,14 +27,15 @@ import org.apache.flink.runtime.io.network.buffer.NetworkBufferPool;
 import org.apache.flink.runtime.io.network.partition.consumer.BufferOrEvent;
 import org.apache.flink.runtime.io.network.partition.consumer.IndexedInputGate;
 import org.apache.flink.runtime.io.network.partition.consumer.InputChannel;
+import org.apache.flink.runtime.mailbox.SyncMailboxExecutor;
 import org.apache.flink.runtime.operators.testutils.DummyCheckpointInvokable;
-import org.apache.flink.streaming.api.operators.SyncMailboxExecutor;
 import org.apache.flink.util.clock.SystemClock;
 
 import org.junit.Test;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
@@ -76,6 +77,7 @@ public class AlignedCheckpointsMassiveRandomTest {
                                     SystemClock.getInstance(),
                                     myIG.getNumberOfInputChannels(),
                                     (callable, duration) -> () -> {},
+                                    true,
                                     myIG),
                             new SyncMailboxExecutor());
 
@@ -233,6 +235,9 @@ public class AlignedCheckpointsMassiveRandomTest {
         @Override
         public void checkpointStopped(long cancelledCheckpointId) {}
 
+        public void acknowledgeAllRecordsProcessed(InputChannelInfo channelInfo)
+                throws IOException {}
+
         @Override
         public void setup() {}
 
@@ -253,6 +258,11 @@ public class AlignedCheckpointsMassiveRandomTest {
         @Override
         public int getGateIndex() {
             return 0;
+        }
+
+        @Override
+        public List<InputChannelInfo> getUnfinishedChannels() {
+            return Collections.emptyList();
         }
     }
 }

@@ -28,13 +28,16 @@ under the License.
 
 ## 打印日志信息
 
-Python UDF可以通过标准的Python logging模块记录上下文和调试信息。
+Python UDF 可以通过 `print` 或者标准的 Python logging 模块记录上下文和调试信息。
 
 ```python
-@udf(input_types=[DataTypes.BIGINT(), DataTypes.BIGINT()], result_type=DataTypes.BIGINT())
+@udf(result_type=DataTypes.BIGINT())
 def add(i, j):
+    # 使用 logging 模块
     import logging
     logging.info("debug")
+    # 使用 print 函数
+    print('debug')
     return i + j
 ```
 
@@ -70,3 +73,14 @@ $ python -c "import pyflink;import os;print(os.path.dirname(os.path.abspath(pyfl
 4. 启动刚刚创建的Python Remote Dubug Server
 
 5. 运行你的Python代码
+
+
+## Profiling Python UDFs
+
+你可以打开profile来分析性能瓶颈
+
+```python
+t_env.get_config().get_configuration().set_boolean("python.profile.enabled", True)
+``` 
+
+你可以在[日志](#查看日志)里面查看profile的结果

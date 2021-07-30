@@ -21,7 +21,10 @@ import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.fnexecution.v1.FlinkFnApi;
 import org.apache.flink.streaming.api.functions.python.DataStreamPythonFunctionInfo;
+
+import static org.apache.flink.streaming.api.utils.ProtoUtils.createRawTypeCoderInfoDescriptorProto;
 
 /**
  * The {@link PythonCoFlatMapOperator} is responsible for executing the Python CoMap Function.
@@ -36,21 +39,13 @@ public class PythonCoMapOperator<IN1, IN2, OUT>
 
     private static final long serialVersionUID = 1L;
 
-    private static final String MAP_CODER_URN = "flink:coder:map:v1";
-
     public PythonCoMapOperator(
             Configuration config,
             TypeInformation<IN1> inputTypeInfo1,
             TypeInformation<IN2> inputTypeInfo2,
             TypeInformation<OUT> outputTypeInfo,
             DataStreamPythonFunctionInfo pythonFunctionInfo) {
-        super(
-                config,
-                inputTypeInfo1,
-                inputTypeInfo2,
-                outputTypeInfo,
-                pythonFunctionInfo,
-                MAP_CODER_URN);
+        super(config, inputTypeInfo1, inputTypeInfo2, outputTypeInfo, pythonFunctionInfo);
     }
 
     @Override
@@ -61,5 +56,19 @@ public class PythonCoMapOperator<IN1, IN2, OUT>
         OUT output = getRunnerOutputTypeSerializer().deserialize(baisWrapper);
         collector.setAbsoluteTimestamp(bufferedTimestamp.poll());
         collector.collect(output);
+    }
+
+    @Override
+    public FlinkFnApi.CoderInfoDescriptor createInputCoderInfoDescriptor(
+            TypeInformation<?> runnerInputType) {
+        return createRawTypeCoderInfoDescriptorProto(
+                runnerInputType, FlinkFnApi.CoderInfoDescriptor.Mode.MULTIPLE, false);
+    }
+
+    @Override
+    public FlinkFnApi.CoderInfoDescriptor createOutputCoderInfoDescriptor(
+            TypeInformation<?> runnerOutType) {
+        return createRawTypeCoderInfoDescriptorProto(
+                runnerOutType, FlinkFnApi.CoderInfoDescriptor.Mode.SINGLE, false);
     }
 }

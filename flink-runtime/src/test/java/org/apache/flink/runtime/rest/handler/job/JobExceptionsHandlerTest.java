@@ -47,7 +47,7 @@ import org.apache.flink.runtime.scheduler.exceptionhistory.ExceptionHistoryEntry
 import org.apache.flink.runtime.scheduler.exceptionhistory.RootExceptionHistoryEntry;
 import org.apache.flink.runtime.taskmanager.LocalTaskManagerLocation;
 import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
-import org.apache.flink.runtime.testingUtils.TestingUtils;
+import org.apache.flink.runtime.testutils.TestingUtils;
 import org.apache.flink.runtime.util.EvictingBoundedList;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.SerializedThrowable;
@@ -85,10 +85,10 @@ public class JobExceptionsHandlerTest extends TestLogger {
     private final JobExceptionsHandler testInstance =
             new JobExceptionsHandler(
                     CompletableFuture::new,
-                    TestingUtils.TIMEOUT(),
+                    TestingUtils.TIMEOUT,
                     Collections.emptyMap(),
                     JobExceptionsHeaders.getInstance(),
-                    new DefaultExecutionGraphCache(TestingUtils.TIMEOUT(), TestingUtils.TIMEOUT()),
+                    new DefaultExecutionGraphCache(TestingUtils.TIMEOUT, TestingUtils.TIMEOUT),
                     TestingUtils.defaultExecutor());
 
     @Test
@@ -161,6 +161,33 @@ public class JobExceptionsHandlerTest extends TestLogger {
                                 JobExceptionsHandler.toString(
                                         otherFailure.getTaskManagerLocation()))));
         assertFalse(response.getExceptionHistory().isTruncated());
+    }
+
+    @Test
+    public void testWithLocalExceptionHistoryEntryNotHavingATaskManagerInformationAvailable()
+            throws HandlerRequestException {
+        final RootExceptionHistoryEntry failure =
+                new RootExceptionHistoryEntry(
+                        new RuntimeException("exception #1"),
+                        System.currentTimeMillis(),
+                        "task name",
+                        null,
+                        Collections.emptySet());
+
+        final ExecutionGraphInfo executionGraphInfo = createExecutionGraphInfo(failure);
+        final HandlerRequest<EmptyRequestBody, JobExceptionsMessageParameters> request =
+                createRequest(executionGraphInfo.getJobId(), 10);
+        final JobExceptionsInfoWithHistory response =
+                testInstance.handleRequest(request, executionGraphInfo);
+
+        assertThat(
+                response.getExceptionHistory().getEntries(),
+                contains(
+                        historyContainsJobExceptionInfo(
+                                failure.getException(),
+                                failure.getTimestamp(),
+                                failure.getFailingTaskName(),
+                                JobExceptionsHandler.toString(failure.getTaskManagerLocation()))));
     }
 
     @Test

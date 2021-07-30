@@ -24,13 +24,14 @@ import org.apache.flink.runtime.state.SharedStateRegistry;
 import org.apache.flink.runtime.state.StateUtil;
 import org.apache.flink.util.Preconditions;
 
-import org.apache.flink.shaded.guava18.com.google.common.collect.Iterators;
+import org.apache.flink.shaded.guava30.com.google.common.collect.Iterators;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -56,8 +57,12 @@ public class TaskStateSnapshot implements CompositeStateHandle {
 
     private static final long serialVersionUID = 1L;
 
+    public static final TaskStateSnapshot FINISHED = new TaskStateSnapshot(new HashMap<>(), true);
+
     /** Mapping from an operator id to the state of one subtask of this operator. */
     private final Map<OperatorID, OperatorSubtaskState> subtaskStatesByOperatorID;
+
+    private final boolean isFinished;
 
     public TaskStateSnapshot() {
         this(10);
@@ -68,7 +73,18 @@ public class TaskStateSnapshot implements CompositeStateHandle {
     }
 
     public TaskStateSnapshot(Map<OperatorID, OperatorSubtaskState> subtaskStatesByOperatorID) {
+        this(subtaskStatesByOperatorID, false);
+    }
+
+    private TaskStateSnapshot(
+            Map<OperatorID, OperatorSubtaskState> subtaskStatesByOperatorID, boolean isFinished) {
         this.subtaskStatesByOperatorID = Preconditions.checkNotNull(subtaskStatesByOperatorID);
+        this.isFinished = isFinished;
+    }
+
+    /** Returns whether all the operators of the task are finished. */
+    public boolean isFinished() {
+        return isFinished;
     }
 
     /** Returns the subtask state for the given operator id (or null if not contained). */
@@ -102,7 +118,7 @@ public class TaskStateSnapshot implements CompositeStateHandle {
                 return true;
             }
         }
-        return false;
+        return isFinished;
     }
 
     /**
@@ -159,12 +175,13 @@ public class TaskStateSnapshot implements CompositeStateHandle {
 
         TaskStateSnapshot that = (TaskStateSnapshot) o;
 
-        return subtaskStatesByOperatorID.equals(that.subtaskStatesByOperatorID);
+        return subtaskStatesByOperatorID.equals(that.subtaskStatesByOperatorID)
+                && isFinished == that.isFinished;
     }
 
     @Override
     public int hashCode() {
-        return subtaskStatesByOperatorID.hashCode();
+        return Objects.hash(subtaskStatesByOperatorID, isFinished);
     }
 
     @Override
@@ -172,6 +189,8 @@ public class TaskStateSnapshot implements CompositeStateHandle {
         return "TaskOperatorSubtaskStates{"
                 + "subtaskStatesByOperatorID="
                 + subtaskStatesByOperatorID
+                + ", isFinished="
+                + isFinished
                 + '}';
     }
 

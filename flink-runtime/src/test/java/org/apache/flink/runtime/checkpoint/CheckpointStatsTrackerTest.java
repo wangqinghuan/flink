@@ -60,6 +60,7 @@ public class CheckpointStatsTrackerTest {
                                 false,
                                 false,
                                 false,
+                                0,
                                 0),
                         null);
 
@@ -114,7 +115,7 @@ public class CheckpointStatsTrackerTest {
         assertEquals(1, counts.getTotalNumberOfCheckpoints());
 
         // Summary should be available
-        CompletedCheckpointStatsSummary summary = snapshot.getSummaryStats();
+        CompletedCheckpointStatsSummarySnapshot summary = snapshot.getSummaryStats();
         assertEquals(1, summary.getStateSizeStats().getCount());
         assertEquals(1, summary.getEndToEndDurationStats().getCount());
 
@@ -206,7 +207,7 @@ public class CheckpointStatsTrackerTest {
         assertEquals(1, counts.getNumberOfFailedCheckpoints());
 
         // Summary stats
-        CompletedCheckpointStatsSummary summary = snapshot.getSummaryStats();
+        CompletedCheckpointStatsSummarySnapshot summary = snapshot.getSummaryStats();
         assertEquals(2, summary.getStateSizeStats().getCount());
         assertEquals(2, summary.getEndToEndDurationStats().getCount());
 

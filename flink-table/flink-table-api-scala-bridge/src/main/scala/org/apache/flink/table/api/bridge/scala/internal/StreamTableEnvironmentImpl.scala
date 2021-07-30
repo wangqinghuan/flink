@@ -27,12 +27,13 @@ import org.apache.flink.streaming.api.environment.{StreamExecutionEnvironment =>
 import org.apache.flink.streaming.api.scala.{DataStream, StreamExecutionEnvironment}
 import org.apache.flink.table.api._
 import org.apache.flink.table.api.internal.TableEnvironmentImpl
+import org.apache.flink.table.catalog.SchemaTranslator.ProducingResult
 import org.apache.flink.table.catalog._
 import org.apache.flink.table.connector.ChangelogMode
 import org.apache.flink.table.delegation.{Executor, ExecutorFactory, Planner, PlannerFactory}
 import org.apache.flink.table.descriptors.{ConnectorDescriptor, StreamTableDescriptor}
 import org.apache.flink.table.expressions.{ApiExpressionUtils, Expression}
-import org.apache.flink.table.factories.ComponentFactoryService
+import org.apache.flink.table.factories.{ComponentFactoryService, FactoryUtil}
 import org.apache.flink.table.functions.{AggregateFunction, TableAggregateFunction, TableFunction, UserDefinedFunctionHelper}
 import org.apache.flink.table.module.ModuleManager
 import org.apache.flink.table.operations._
@@ -134,6 +135,13 @@ class StreamTableEnvironmentImpl (
       @Nullable viewPath: String,
       changelogMode: ChangelogMode): Table = {
     Preconditions.checkNotNull(changelogMode, "Changelog mode must not be null.")
+
+    if (dataStream.getExecutionEnvironment ne scalaExecutionEnvironment.getJavaEnv) {
+      throw new ValidationException(
+        "The DataStream's StreamExecutionEnvironment must be identical to the one that " +
+          "has been passed to the StreamTableEnvironment during instantiation.")
+    }
+
     val catalogManager = getCatalogManager
     val schemaResolver = catalogManager.getSchemaResolver
     val operationTreeBuilder = getOperationTreeBuilder
@@ -146,7 +154,7 @@ class StreamTableEnvironmentImpl (
     val objectIdentifier = catalogManager.qualifyIdentifier(unresolvedIdentifier)
 
     val schemaTranslationResult =
-      ExternalSchemaTranslator.fromExternal(
+      SchemaTranslator.createConsumingResult(
         catalogManager.getDataTypeFactory, dataStream.getType, schema)
 
     val resolvedSchema = schemaTranslationResult.getSchema.resolve(schemaResolver)
@@ -199,7 +207,7 @@ class StreamTableEnvironmentImpl (
     Preconditions.checkNotNull(table, "Table must not be null.")
     Preconditions.checkNotNull(targetDataType, "Target data type must not be null.")
 
-    val schemaTranslationResult = ExternalSchemaTranslator.fromInternal(
+    val schemaTranslationResult = SchemaTranslator.createProducingResult(
       catalogManager.getDataTypeFactory,
       table.getResolvedSchema,
       targetDataType)
@@ -210,7 +218,7 @@ class StreamTableEnvironmentImpl (
   override def toChangelogStream(table: Table): DataStream[Row] = {
     Preconditions.checkNotNull(table, "Table must not be null.")
 
-    val schemaTranslationResult = ExternalSchemaTranslator.fromInternal(
+    val schemaTranslationResult = SchemaTranslator.createProducingResult(
       table.getResolvedSchema,
       null)
 
@@ -221,7 +229,7 @@ class StreamTableEnvironmentImpl (
     Preconditions.checkNotNull(table, "Table must not be null.")
     Preconditions.checkNotNull(targetSchema, "Target schema must not be null.")
 
-    val schemaTranslationResult = ExternalSchemaTranslator.fromInternal(
+    val schemaTranslationResult = SchemaTranslator.createProducingResult(
       table.getResolvedSchema,
       targetSchema)
 
@@ -237,7 +245,7 @@ class StreamTableEnvironmentImpl (
     Preconditions.checkNotNull(targetSchema, "Target schema must not be null.")
     Preconditions.checkNotNull(changelogMode, "Changelog mode must not be null.")
 
-    val schemaTranslationResult = ExternalSchemaTranslator.fromInternal(
+    val schemaTranslationResult = SchemaTranslator.createProducingResult(
       table.getResolvedSchema,
       targetSchema)
 
@@ -246,9 +254,8 @@ class StreamTableEnvironmentImpl (
 
   private def toStreamInternal[T](
       table: Table,
-      schemaTranslationResult: ExternalSchemaTranslator.OutputResult,
-      @Nullable changelogMode: ChangelogMode)
-    : DataStream[T] = {
+      schemaTranslationResult: ProducingResult,
+      @Nullable changelogMode: ChangelogMode): DataStream[T] = {
     val catalogManager = getCatalogManager
     val schemaResolver = catalogManager.getSchemaResolver
     val operationTreeBuilder = getOperationTreeBuilder
@@ -484,8 +491,7 @@ object StreamTableEnvironmentImpl {
 
     val functionCatalog = new FunctionCatalog(tableConfig, catalogManager, moduleManager)
 
-    val executorProperties = settings.toExecutorProperties
-    val executor = lookupExecutor(executorProperties, executionEnvironment)
+    val executor = lookupExecutor(classLoader, settings.getExecutor, executionEnvironment)
 
     val plannerProperties = settings.toPlannerProperties
     val planner = ComponentFactoryService.find(classOf[PlannerFactory], plannerProperties)
@@ -510,22 +516,20 @@ object StreamTableEnvironmentImpl {
   }
 
   private def lookupExecutor(
-      executorProperties: JMap[String, String],
+      classLoader: ClassLoader,
+      executorIdentifier: String,
       executionEnvironment: StreamExecutionEnvironment)
     :Executor =
     try {
-      val executorFactory = ComponentFactoryService
-        .find(classOf[ExecutorFactory], executorProperties)
-      val createMethod = executorFactory.getClass
-        .getMethod(
-          "create",
-          classOf[util.Map[String, String]],
-          classOf[JStreamExecutionEnvironment])
+      val executorFactory =
+        FactoryUtil.discoverFactory(classLoader, classOf[ExecutorFactory], executorIdentifier)
+      val createMethod = executorFactory
+        .getClass
+        .getMethod("create", classOf[JStreamExecutionEnvironment])
 
       createMethod
         .invoke(
           executorFactory,
-          executorProperties,
           executionEnvironment.getWrappedStreamExecutionEnvironment)
         .asInstanceOf[Executor]
     } catch {

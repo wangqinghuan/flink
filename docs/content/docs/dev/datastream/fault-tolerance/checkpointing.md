@@ -81,7 +81,7 @@ Other parameters for checkpointing include:
 
   - *prefer checkpoint for recovery*: This determines if a job will fallback to latest checkpoint even when there are more recent savepoints available to potentially reduce recovery time.
 
-  - *unaligned checkpoints*: You can enable [unaligned checkpoints]({{< ref "docs/ops/state/checkpoints" >}}#unaligned-checkpoints) to greatly reduce checkpointing times under backpressure. Only works for exactly-once checkpoints and with number of concurrent checkpoints of 1.
+  - *unaligned checkpoints*: You can enable [unaligned checkpoints]({{< ref "docs/ops/state/unaligned_checkpoints" >}}) to greatly reduce checkpointing times under backpressure. Only works for exactly-once checkpoints and with number of concurrent checkpoints of 1.
 
 {{< tabs "4b9c6a74-8a45-4ad2-9e80-52fe44a85991" >}}
 {{< tab "Java" >}}
@@ -114,7 +114,7 @@ env.getCheckpointConfig().enableExternalizedCheckpoints(
 env.getCheckpointConfig().enableUnalignedCheckpoints();
 
 // sets the checkpoint storage where checkpoint snapshots will be written
-env.getCheckpointConfig().setCheckpointStorage("hdfs://my/checkpoint/dir")
+env.getCheckpointConfig().setCheckpointStorage("hdfs:///my/checkpoint/dir")
 ```
 {{< /tab >}}
 {{< tab "Scala" >}}
@@ -146,7 +146,7 @@ env.getCheckpointConfig.setMaxConcurrentCheckpoints(1)
 env.getCheckpointConfig.enableUnalignedCheckpoints()
 
 // sets the checkpoint storage where checkpoint snapshots will be written
-env.getCheckpointConfig.setCheckpointStorage("hdfs://my/checkpoint/dir")
+env.getCheckpointConfig.setCheckpointStorage("hdfs:///my/checkpoint/dir")
 ```
 {{< /tab >}}
 {{< tab "Python" >}}

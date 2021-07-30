@@ -354,7 +354,7 @@ function check_logs_for_errors {
       | grep -v "AskTimeoutException" \
       | grep -v "Error while loading kafka-version.properties" \
       | grep -v "WARN  akka.remote.transport.netty.NettyTransport" \
-      | grep -v "WARN  org.apache.flink.shaded.akka.org.jboss.netty.channel.DefaultChannelPipeline" \
+      | grep -v "WARN  org.jboss.netty.channel.DefaultChannelPipeline" \
       | grep -v "jvm-exit-on-fatal-error" \
       | grep -v 'INFO.*AWSErrorCode' \
       | grep -v "RejectedExecutionException" \
@@ -389,7 +389,7 @@ function check_logs_for_exceptions {
    | grep -v "Cannot connect to ResourceManager right now" \
    | grep -v "AskTimeoutException" \
    | grep -v "WARN  akka.remote.transport.netty.NettyTransport" \
-   | grep -v  "WARN  org.apache.flink.shaded.akka.org.jboss.netty.channel.DefaultChannelPipeline" \
+   | grep -v  "WARN  org.jboss.netty.channel.DefaultChannelPipeline" \
    | grep -v 'INFO.*AWSErrorCode' \
    | grep -v "RejectedExecutionException" \
    | grep -v "CancellationException" \
@@ -501,7 +501,7 @@ function wait_job_terminal_state {
   echo "Waiting for job ($job) to reach terminal state $expected_terminal_state ..."
 
   while : ; do
-    local N=$(grep -o "Job $job reached globally terminal state .*" $FLINK_LOG_DIR/*$log_file_name*.log | tail -1 || true)
+    local N=$(grep -o "Job $job reached terminal state .*" $FLINK_LOG_DIR/*$log_file_name*.log | tail -1 || true)
     if [[ -z $N ]]; then
       sleep 1
     else
